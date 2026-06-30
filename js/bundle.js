@@ -50,8 +50,8 @@ var store = {
   addLink: function(pid, dados) {
     var p = db.projetos.find(function(x){ return x.id===pid; }); if(!p) return;
     var novo = { id:novoId("l"), tipo:dados.tipo, titulo:dados.titulo,
-      url:dados.url, senha:dados.senha||"", numero:dados.numero||null,
-      temporada:dados.temporada||null };
+      url:dados.url, privacidade:dados.privacidade||"", senha:dados.senha||"",
+      numero:dados.numero||null, temporada:dados.temporada||null };
     p.links.push(novo); saveDb(); return novo;
   },
   updateLink: function(pid, lid, dados) {
@@ -131,10 +131,15 @@ async function fetchVimeoTitle(url) {
     var res = await fetch("https://vimeo.com/api/oembed.json?url=" + encodeURIComponent(url),
       { signal: ctrl.signal });
     clearTimeout(t);
+    console.log("[Vimeo oEmbed] status:", res.status, "url:", url);
     if (!res.ok) return null;
     var data = await res.json();
+    console.log("[Vimeo oEmbed] título:", data.title);
     return data.title || null;
-  } catch(_) { return null; }
+  } catch(e) {
+    console.warn("[Vimeo oEmbed] erro:", e);
+    return null;
+  }
 }
 
 /* ============================================================
@@ -236,6 +241,25 @@ var TIPOS_LINK = [
   {value:"promo",label:"Promo"},{value:"vitrine",label:"Vitrine Vimeo"},
   {value:"outro",label:"Outro"}
 ];
+var PRIVACIDADES = [
+  {value:"privado",    label:"Privado (só com link, sem senha)"},
+  {value:"senha",      label:"Senha (protegido por senha)"},
+  {value:"nao_listado",label:"Não listado (qualquer pessoa com o link)"},
+  {value:"publico",    label:"Público"},
+  {value:"incorporado",label:"Apenas incorporado"}
+];
+var PRIV_META = {
+  privado:     {label:"Privado",     cor:"rose"},
+  senha:       {label:"Senha",       cor:"amber"},
+  nao_listado: {label:"Não listado", cor:"gray"},
+  publico:     {label:"Público",     cor:"green"},
+  incorporado: {label:"Incorporado", cor:"blue"}
+};
+function privBadge(priv) {
+  if (!priv) return "";
+  var m = PRIV_META[priv]; if (!m) return "";
+  return '<span class="priv-badge badge-'+m.cor+'">'+m.label+'</span>';
+}
 var STATUS_DEMANDA = ["Pendente","Em andamento","Concluída","Cancelada"];
 
 /* ---- Projeto ---- */
@@ -367,11 +391,15 @@ function abrirNovoProjeto(existente) {
 }
 
 /* ---- Link Vimeo ---- */
-function abrirNovoLink(projetoId, existente) {
+function abrirNovoLink(projetoId, existente, tipoForcado) {
   var ed = !!existente, l = existente||{};
   var proj = store.getProjeto(projetoId);
   var isSerie = proj && proj.categoria==="Série";
   var temporadas = (proj && proj.temporadas) || [];
+  var tipoInicial = tipoForcado || l.tipo || "master";
+  var tiposDisp = tipoForcado
+    ? [{value:tipoForcado, label:(TIPOS_LINK.find(function(t){return t.value===tipoForcado;})||{label:tipoForcado}).label}]
+    : TIPOS_LINK.filter(function(t){ return t.value!=="vitrine"; });
 
   var tempOpts = temporadas.map(function(t){
     return { value: String(t.num), label: "T"+t.num+(t.ano?" ("+t.ano+")":"") };
@@ -385,27 +413,50 @@ function abrirNovoLink(projetoId, existente) {
       fText("titulo","Texto do link",{required:true,value:l.titulo||"",placeholder:"Ex.: Master — Marca d'água Canal Brasil"})+
       '<div class="field-hint" id="vimeo-hint" style="display:none">Buscando título no Vimeo…</div>'+
       '<div class="field-2col">'+
-        fSelect("tipo","Tipo",TIPOS_LINK,{value:l.tipo||"master"})+
+        fSelect("tipo","Tipo",tiposDisp,{value:tipoInicial})+
         (isSerie && tempOpts.length
           ? fSelect("temporada","Temporada",tempOpts,{value:String(l.temporada||tempOpts[0].value)})
           : '<div></div>')+
       '</div>'+
       fText("numero","Nº episódio",{type:"number",value:l.numero||"",placeholder:isSerie?"Episódio dentro da temporada":"Deixe em branco se não for episódio"})+
-      fText("senha","Senha Vimeo",{value:l.senha||"",placeholder:"Deixe em branco se público"}),
+      fSelect("privacidade","Privacidade no Vimeo *",PRIVACIDADES,{value:l.privacidade||"nao_listado"})+
+      '<div id="campo-senha">'+
+        fText("senha","Senha do vídeo",{value:l.senha||"",placeholder:"Senha de acesso ao vídeo"})+
+      '</div>',
 
     onMount: function(form) {
+      var privSelect = form.querySelector("#f_privacidade");
+      var campoSenha = form.querySelector("#campo-senha");
+      function toggleSenha() {
+        campoSenha.style.display = privSelect.value==="senha" ? "block" : "none";
+      }
+      privSelect.addEventListener("change", toggleSenha);
+      toggleSenha();
+
       if (ed) return;
       var urlInput = form.querySelector("#f_url");
       var tituloInput = form.querySelector("#f_titulo");
       var hint = form.querySelector("#vimeo-hint");
-      urlInput.addEventListener("blur", async function() {
-        var url = urlInput.value.trim();
+      async function tentarBuscarTitulo(url) {
         if (!url || tituloInput.value.trim()) return;
         hint.textContent = "Buscando título no Vimeo…";
         hint.style.display = "block";
         var title = await fetchVimeoTitle(url);
-        hint.style.display = "none";
-        if (title && !tituloInput.value.trim()) tituloInput.value = title;
+        if (title && !tituloInput.value.trim()) {
+          tituloInput.value = title;
+          hint.style.display = "none";
+        } else if (!tituloInput.value.trim()) {
+          hint.textContent = "Não foi possível buscar o título (vídeo privado). Preencha manualmente.";
+        } else {
+          hint.style.display = "none";
+        }
+      }
+      urlInput.addEventListener("paste", function(e) {
+        var colado = (e.clipboardData || window.clipboardData).getData("text").trim();
+        setTimeout(function(){ tentarBuscarTitulo(colado); }, 0);
+      });
+      urlInput.addEventListener("blur", function() {
+        tentarBuscarTitulo(urlInput.value.trim());
       });
     },
 
@@ -413,9 +464,13 @@ function abrirNovoLink(projetoId, existente) {
       var url = readVal(form,"url"), titulo = readVal(form,"titulo");
       if (!url) throw new Error("Informe a URL do Vimeo.");
       if (!titulo) throw new Error("Informe o texto do link.");
+      var priv = readVal(form,"privacidade");
+      if (!priv) throw new Error("Selecione a privacidade do vídeo no Vimeo.");
       var dados = {
-        tipo: readVal(form,"tipo"), titulo: titulo, url: url,
-        senha: readVal(form,"senha"),
+        tipo: tipoForcado || readVal(form,"tipo"),
+        titulo: titulo, url: url,
+        privacidade: priv,
+        senha: priv==="senha" ? readVal(form,"senha") : "",
         numero: Number(readVal(form,"numero"))||null,
         temporada: (isSerie && tempOpts.length) ? Number(readVal(form,"temporada"))||null : null
       };
@@ -568,22 +623,67 @@ var TIPO_META = {
 };
 var STATUS_COR = { "Pendente":"amber","Em andamento":"blue","Concluída":"green","Cancelada":"gray" };
 
+var _toastTimer;
+function showCopyToast() {
+  var t = document.getElementById("copy-toast");
+  if (!t) {
+    t = document.createElement("div");
+    t.id = "copy-toast"; t.className = "copy-toast";
+    t.textContent = "Texto copiado para área de transferência";
+    document.body.appendChild(t);
+  }
+  t.classList.add("show");
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(function(){ t.classList.remove("show"); }, 2000);
+}
+
+function attrShare(text) {
+  return String(text).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/\n/g,"&#10;");
+}
+function buildShareText(l) {
+  var meta = TIPO_META[l.tipo]||{label:l.tipo||""};
+  var priv = PRIV_META[l.privacidade]||{label:""};
+  var prefix = l.temporada ? "T"+l.temporada+(l.numero?" E"+l.numero:"")+" — "
+              : l.numero   ? "Ep."+l.numero+" — " : "";
+  var lines = [prefix+l.titulo, meta.label+(priv.label?" · "+priv.label:""), l.url];
+  if (l.privacidade==='senha' && l.senha) lines.push("Senha: "+l.senha);
+  return lines.join("\n");
+}
+function buildGroupShareText(tipo, links, projetoNome) {
+  var meta = TIPO_META[tipo]||{label:tipo};
+  var header = (projetoNome?projetoNome+" — ":"")+meta.label;
+  var items = links.map(function(l, i){
+    var prefix = l.temporada ? "T"+l.temporada+(l.numero?" E"+l.numero:"")+" — "
+                : l.numero   ? "Ep."+l.numero+" — " : "";
+    var line = (i+1)+". "+prefix+l.titulo+"\n   "+l.url;
+    if (l.privacidade==='senha' && l.senha) line += "\n   Senha: "+l.senha;
+    return line;
+  });
+  return header+"\n\n"+items.join("\n\n");
+}
+
 function linkRow(l) {
-  var temSenha = !!l.senha;
-  /* badge de temporada/episódio */
+  var temSenha = l.privacidade==='senha' && !!l.senha;
   var badge = "";
   if (l.temporada) badge = '<span class="ep-badge">T'+l.temporada+(l.numero?' E'+l.numero:'')+'</span> ';
   else if (l.numero) badge = '<span class="ep-badge">Ep.'+l.numero+'</span> ';
   return '<div class="link-item">'+
-    '<div class="link-titulo">'+badge+esc(l.titulo)+(temSenha?' <span class="lock-icon">🔒</span>':"")+
+    '<div class="link-info">'+
+      '<div class="link-titulo">'+badge+esc(l.titulo)+
+        (l.privacidade?' '+privBadge(l.privacidade):"")+
+        (temSenha?' <span class="lock-icon">🔒</span>':"")+
+      '</div>'+
+      '<a href="'+esc(l.url)+'" target="_blank" rel="noopener" class="link-url-text">'+esc(l.url)+'</a>'+
     '</div>'+
+    '<button class="share-icon-btn" data-action="share" data-share-text="'+attrShare(buildShareText(l))+'" title="Copiar para compartilhar">'+
+      '<img src="./Compartilhar.png" width="18" height="18" alt="Compartilhar">'+
+    '</button>'+
     (temSenha?
       '<div class="link-senha-box">'+
         '<button class="senha-toggle" data-action="senha" data-link-id="'+esc(l.id)+'">Ver senha</button>'+
         '<span class="senha-valor">'+esc(l.senha)+'</span>'+
         '<button class="copy-btn" data-copy="'+esc(l.senha)+'">Copiar</button>'+
       '</div>':"")+
-    '<a href="'+esc(l.url)+'" target="_blank" rel="noopener" class="btn btn-sm">Abrir ↗</a>'+
     '<div class="item-actions">'+
       '<button class="icon-btn" data-action="edit" data-link-id="'+esc(l.id)+'" title="Editar">✎</button>'+
       '<button class="icon-btn danger" data-action="del" data-link-id="'+esc(l.id)+'" title="Excluir">🗑</button>'+
@@ -591,25 +691,32 @@ function linkRow(l) {
   '</div>';
 }
 
-function renderVideosPorTipo(links) {
+function renderVideosPorTipo(links, projetoNome) {
   var grupos = {};
   links.forEach(function(l){ if(!grupos[l.tipo]) grupos[l.tipo]=[]; grupos[l.tipo].push(l); });
   return Object.keys(TIPO_META).filter(function(t){ return grupos[t]; }).map(function(tipo){
     var meta = TIPO_META[tipo];
+    var grupoTxt = attrShare(buildGroupShareText(tipo, grupos[tipo], projetoNome||""));
     return '<div class="link-grupo">'+
-      '<div class="link-grupo-titulo">'+meta.icon+" "+meta.label+'</div>'+
+      '<div class="link-grupo-titulo">'+
+        '<span>'+meta.icon+" "+meta.label+'</span>'+
+        '<button class="share-grupo-btn" data-action="share" data-share-text="'+grupoTxt+'" title="Compartilhar todos do grupo">'+
+          '<img src="./Compartilhar.png" width="14" height="14" alt="Compartilhar">'+
+        '</button>'+
+      '</div>'+
       grupos[tipo].map(linkRow).join("")+
     '</div>';
   }).join("");
 }
 
 function renderVideos(p) {
-  if (!p.links.length) return '<div class="empty-tab">Nenhum link cadastrado ainda.</div>';
+  var links = p.links.filter(function(l){ return l.tipo!=='vitrine'; });
+  if (!links.length) return '<div class="empty-tab">Nenhum link cadastrado ainda.</div>';
 
   /* Série: agrupa por temporada */
   if (p.categoria==="Série") {
     var byTemp = {}, semTemp = [];
-    p.links.forEach(function(l){
+    links.forEach(function(l){
       if (l.temporada) {
         if (!byTemp[l.temporada]) byTemp[l.temporada] = [];
         byTemp[l.temporada].push(l);
@@ -622,17 +729,25 @@ function renderVideos(p) {
         (tInfo&&tInfo.totalEps?" · "+tInfo.totalEps+" episódios":"");
       return '<div style="margin-bottom:28px">'+
         '<div class="temp-header">'+tLabel+'</div>'+
-        renderVideosPorTipo(byTemp[tNum])+
+        renderVideosPorTipo(byTemp[tNum], p.nome)+
       '</div>';
     }).join("");
     if (semTemp.length) html += '<div style="margin-bottom:28px">'+
       '<div class="temp-header">Gerais / Sem temporada</div>'+
-      renderVideosPorTipo(semTemp)+'</div>';
+      renderVideosPorTipo(semTemp, p.nome)+'</div>';
     return html;
   }
 
   /* Outros: agrupa só por tipo */
-  return renderVideosPorTipo(p.links);
+  return renderVideosPorTipo(links, p.nome);
+}
+
+function renderVitrine(p) {
+  var vitrines = p.links.filter(function(l){ return l.tipo==='vitrine'; });
+  if (!vitrines.length) return '<div class="empty-tab">Nenhuma vitrine cadastrada ainda.<br>'+
+    '<span style="font-size:13px;color:var(--text-soft);margin-top:6px;display:block">'+
+    'Uma vitrine é um mostruário de vídeos no Vimeo — cada vídeo dentro dela tem sua própria privacidade.</span></div>';
+  return vitrines.map(linkRow).join("");
 }
 
 function renderMarcaDagua(p) {
@@ -640,8 +755,11 @@ function renderMarcaDagua(p) {
   return p.marcaDagua.map(function(md){
     var temSenha = !!md.senha;
     return '<div class="link-item">'+
-      '<div class="link-titulo">'+esc(md.titulo)+(temSenha?' <span class="lock-icon">🔒</span>':"")+
-        (md.observacoes?' <span class="link-obs">'+esc(md.observacoes)+'</span>':"")+
+      '<div class="link-info">'+
+        '<div class="link-titulo">'+esc(md.titulo)+(temSenha?' <span class="lock-icon">🔒</span>':"")+
+          (md.observacoes?' <span class="link-obs">'+esc(md.observacoes)+'</span>':"")+
+        '</div>'+
+        '<div class="link-url-text" title="Clique para selecionar">'+esc(md.url)+'</div>'+
       '</div>'+
       (temSenha?
         '<div class="link-senha-box">'+
@@ -649,7 +767,7 @@ function renderMarcaDagua(p) {
           '<span class="senha-valor">'+esc(md.senha)+'</span>'+
           '<button class="copy-btn" data-copy="'+esc(md.senha)+'">Copiar</button>'+
         '</div>':"")+
-      '<a href="'+esc(md.url)+'" target="_blank" rel="noopener" class="btn btn-sm">Abrir ↗</a>'+
+      '<a href="'+esc(md.url)+'" target="_blank" rel="noopener" class="btn btn-link-abrir">Abrir link no Vimeo</a>'+
       '<div class="item-actions">'+
         '<button class="icon-btn" data-action="edit" data-md-id="'+esc(md.id)+'" title="Editar">✎</button>'+
         '<button class="icon-btn danger" data-action="del" data-md-id="'+esc(md.id)+'" title="Excluir">🗑</button>'+
@@ -676,6 +794,27 @@ function renderDemandas(p) {
   }).join("");
 }
 
+function renderVideosTipo(p, tipo) {
+  var links = p.links.filter(function(l){ return l.tipo===tipo; });
+  if (!links.length) return '<div class="empty-tab">Nenhum link cadastrado.</div>';
+  if (tipo==='episodio' && p.categoria==='Série') {
+    var byTemp = {}, semTemp = [];
+    links.forEach(function(l){
+      if (l.temporada) { if (!byTemp[l.temporada]) byTemp[l.temporada]=[]; byTemp[l.temporada].push(l); }
+      else semTemp.push(l);
+    });
+    var keys = Object.keys(byTemp).sort(function(a,b){ return Number(a)-Number(b); });
+    var html = keys.map(function(tNum){
+      var tInfo = p.temporadas && p.temporadas.find(function(x){ return x.num===Number(tNum); });
+      var tLabel = "Temporada "+tNum+(tInfo&&tInfo.ano?" · "+tInfo.ano:"")+(tInfo&&tInfo.totalEps?" · "+tInfo.totalEps+" episódios":"");
+      return '<div style="margin-bottom:28px"><div class="temp-header">'+tLabel+'</div>'+byTemp[tNum].map(linkRow).join("")+'</div>';
+    }).join("");
+    if (semTemp.length) html += '<div style="margin-bottom:28px"><div class="temp-header">Gerais</div>'+semTemp.map(linkRow).join("")+'</div>';
+    return html;
+  }
+  return links.map(linkRow).join("");
+}
+
 function renderProjeto(app, id) {
   var p = store.getProjeto(id);
   if (!p) {
@@ -694,6 +833,45 @@ function renderProjeto(app, id) {
     }).join("");
   }
 
+  /* tipos presentes (excluindo vitrine) para gerar abas dinâmicas */
+  var tiposPresentes = Object.keys(TIPO_META).filter(function(t){
+    return t!=='vitrine' && p.links.some(function(l){ return l.tipo===t; });
+  });
+  var nTudo = p.links.filter(function(l){ return l.tipo!=='vitrine'; }).length;
+
+  var tabsHtml =
+    '<button class="tab-btn active" data-tab="tudo">Tudo <span class="tab-count">'+nTudo+'</span></button>';
+  tiposPresentes.forEach(function(t){
+    var meta = TIPO_META[t];
+    var n = p.links.filter(function(l){ return l.tipo===t; }).length;
+    tabsHtml += '<button class="tab-btn" data-tab="tipo-'+t+'">'+meta.label+' <span class="tab-count">'+n+'</span></button>';
+  });
+  tabsHtml += '<button class="tab-btn" data-tab="marca">Marca d\'água <span class="tab-count">'+p.marcaDagua.length+'</span></button>';
+
+  var panelsHtml =
+    '<div class="tab-panel active" id="tab-tudo">'+
+      renderVideos(p)+
+      '<button class="btn btn-ghost tab-add-btn" id="btn-add-link">+ Adicionar link</button>'+
+    '</div>';
+  tiposPresentes.forEach(function(t){
+    var tipoLinks = p.links.filter(function(l){ return l.tipo===t; });
+    var shareTxt = attrShare(buildGroupShareText(t, tipoLinks, p.nome));
+    panelsHtml +=
+      '<div class="tab-panel" id="tab-tipo-'+t+'">'+
+        '<div class="tab-share-all">'+
+          '<button class="share-grupo-btn" data-action="share" data-share-text="'+shareTxt+'" title="Compartilhar todos os links">'+
+            '<img src="./Compartilhar.png" width="16" height="16" style="margin-right:6px"> Compartilhar todos'+
+          '</button>'+
+        '</div>'+
+        renderVideosTipo(p,t)+
+      '</div>';
+  });
+  panelsHtml +=
+    '<div class="tab-panel" id="tab-marca">'+
+      renderMarcaDagua(p)+
+      '<button class="btn btn-ghost tab-add-btn" id="btn-add-md">+ Adicionar versão</button>'+
+    '</div>';
+
   app.innerHTML =
     '<a class="back-link" href="#/">← Voltar ao catálogo</a>'+
     '<div class="proj-detail">'+
@@ -708,6 +886,7 @@ function renderProjeto(app, id) {
           tempInfo+
         '</div>'+
         '<div class="proj-aside-actions">'+
+          '<button class="btn btn-primary" id="btn-add-link-aside">+ Adicionar link</button>'+
           '<button class="btn" id="btn-editar">Editar projeto</button>'+
           '<button class="btn btn-ghost danger-btn" id="btn-excluir">Excluir</button>'+
         '</div>'+
@@ -715,24 +894,12 @@ function renderProjeto(app, id) {
       '<div class="proj-detail-main">'+
         '<h1 class="proj-title">'+esc(p.nome)+'</h1>'+
         (p.sinopse?'<p class="proj-sinopse">'+esc(p.sinopse)+'</p>':"")+
-        '<div class="tabs">'+
-          '<button class="tab-btn active" data-tab="videos">Vídeos <span class="tab-count">'+p.links.length+'</span></button>'+
-          '<button class="tab-btn" data-tab="marca">Marca d\'água <span class="tab-count">'+p.marcaDagua.length+'</span></button>'+
-          '<button class="tab-btn" data-tab="demandas">Demandas <span class="tab-count">'+p.demandas.length+'</span></button>'+
-        '</div>'+
-        '<div class="tab-panel active" id="tab-videos">'+
-          renderVideos(p)+'<button class="btn btn-ghost tab-add-btn" id="btn-add-link">+ Adicionar link</button>'+
-        '</div>'+
-        '<div class="tab-panel" id="tab-marca">'+
-          renderMarcaDagua(p)+'<button class="btn btn-ghost tab-add-btn" id="btn-add-md">+ Adicionar versão</button>'+
-        '</div>'+
-        '<div class="tab-panel" id="tab-demandas">'+
-          renderDemandas(p)+'<button class="btn btn-ghost tab-add-btn" id="btn-add-demanda">+ Nova demanda</button>'+
-        '</div>'+
+        '<div class="tabs">'+tabsHtml+'</div>'+
+        panelsHtml+
       '</div>'+
     '</div>';
 
-  /* tabs */
+  /* troca de abas */
   app.querySelectorAll(".tab-btn").forEach(function(btn){
     btn.addEventListener("click", function(){
       app.querySelectorAll(".tab-btn").forEach(function(b){ b.classList.remove("active"); });
@@ -745,25 +912,34 @@ function renderProjeto(app, id) {
   document.getElementById("btn-editar").addEventListener("click", function(){ abrirNovoProjeto(p); });
   document.getElementById("btn-excluir").addEventListener("click", function(){
     if (!confirm('Excluir "'+p.nome+'" e todos os seus dados?')) return;
-    store.removeProjeto(p.id);
-    location.hash = "#/";
+    store.removeProjeto(p.id); location.hash = "#/";
   });
   document.getElementById("btn-add-link").addEventListener("click", function(){ abrirNovoLink(p.id); });
+  document.getElementById("btn-add-link-aside").addEventListener("click", function(){ abrirNovoLink(p.id); });
   document.getElementById("btn-add-md").addEventListener("click", function(){ abrirNovaMarcaDagua(p.id); });
-  document.getElementById("btn-add-demanda").addEventListener("click", function(){ abrirNovaDemanda(p.id); });
 
-  /* delegação vídeos */
-  document.getElementById("tab-videos").addEventListener("click", function(e){
-    var lid = e.target.dataset.linkId, action = e.target.dataset.action, copy = e.target.dataset.copy;
-    if (copy !== undefined) { navigator.clipboard.writeText(copy).catch(function(){}); return; }
-    if (action==="senha") { var box=e.target.closest(".link-senha-box"); if(box) box.classList.toggle("revealed"); return; }
-    if (!lid) return;
-    var link = p.links.find(function(l){ return l.id===lid; }); if (!link) return;
-    if (action==="edit") { abrirNovoLink(p.id, link); return; }
-    if (action==="del") { if (!confirm('Excluir o link "'+link.titulo+'"?')) return; store.removeLink(p.id, lid); }
-  });
+  function handleShare(e) {
+    var btn = e.target.closest("[data-action='share']");
+    if (!btn) return;
+    navigator.clipboard.writeText(btn.dataset.shareText).then(showCopyToast).catch(function(){});
+  }
 
-  /* delegação marca d'água */
+  function linkDelegacao(el) {
+    el.addEventListener("click", function(e){
+      if (e.target.closest("[data-action='share']")) { handleShare(e); return; }
+      var lid = e.target.dataset.linkId, action = e.target.dataset.action, copy = e.target.dataset.copy;
+      if (copy !== undefined) { navigator.clipboard.writeText(copy).catch(function(){}); return; }
+      if (action==="senha") { var box=e.target.closest(".link-senha-box"); if(box) box.classList.toggle("revealed"); return; }
+      if (!lid) return;
+      var link = p.links.find(function(l){ return l.id===lid; }); if (!link) return;
+      if (action==="edit") { abrirNovoLink(p.id, link); return; }
+      if (action==="del") { if (!confirm('Excluir o link "'+link.titulo+'"?')) return; store.removeLink(p.id, lid); }
+    });
+  }
+
+  linkDelegacao(document.getElementById("tab-tudo"));
+  tiposPresentes.forEach(function(t){ linkDelegacao(document.getElementById("tab-tipo-"+t)); });
+
   document.getElementById("tab-marca").addEventListener("click", function(e){
     var mid = e.target.dataset.mdId, action = e.target.dataset.action, copy = e.target.dataset.copy;
     if (copy !== undefined) { navigator.clipboard.writeText(copy).catch(function(){}); return; }
@@ -772,15 +948,6 @@ function renderProjeto(app, id) {
     var md = p.marcaDagua.find(function(x){ return x.id===mid; }); if (!md) return;
     if (action==="edit") { abrirNovaMarcaDagua(p.id, md); return; }
     if (action==="del") { if (!confirm('Excluir "'+md.titulo+'"?')) return; store.removeMarcaDagua(p.id, mid); }
-  });
-
-  /* delegação demandas */
-  document.getElementById("tab-demandas").addEventListener("click", function(e){
-    var did = e.target.dataset.demandaId, action = e.target.dataset.action;
-    if (!did) return;
-    var d = p.demandas.find(function(x){ return x.id===did; }); if (!d) return;
-    if (action==="edit") { abrirNovaDemanda(p.id, d); return; }
-    if (action==="del") { if (!confirm("Excluir esta demanda?")) return; store.removeDemanda(p.id, did); }
   });
 }
 

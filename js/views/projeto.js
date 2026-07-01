@@ -173,7 +173,10 @@ function linkRow(l) {
   const temSenha = !!l.senha;
   const rotulo = l.numero ? `Ep. ${l.numero} — ${esc(l.titulo)}` : esc(l.titulo);
   return `<div class="link-item">
-    <div class="link-titulo">${rotulo} ${temSenha ? `<span class="lock-icon" title="Protegido por senha">🔒</span>` : ""}</div>
+    <div class="link-info">
+      <div class="link-titulo">${rotulo} ${temSenha ? `<span class="lock-icon" title="Protegido por senha">🔒</span>` : ""}</div>
+      <div class="link-url-text" title="Clique para selecionar">${esc(l.url)}</div>
+    </div>
     ${temSenha ? `<div class="link-senha-box">
       <button class="senha-toggle" data-action="senha" data-link-id="${esc(l.id)}">Ver senha</button>
       <span class="senha-valor">${esc(l.senha)}</span>
@@ -192,8 +195,11 @@ function renderMarcaDagua(p) {
   return p.marcaDagua.map((md) => {
     const temSenha = !!md.senha;
     return `<div class="link-item">
-      <div class="link-titulo">${esc(md.titulo)} ${temSenha ? `<span class="lock-icon">🔒</span>` : ""}
-        ${md.observacoes ? `<span class="link-obs">${esc(md.observacoes)}</span>` : ""}
+      <div class="link-info">
+        <div class="link-titulo">${esc(md.titulo)} ${temSenha ? `<span class="lock-icon">🔒</span>` : ""}
+          ${md.observacoes ? `<span class="link-obs">${esc(md.observacoes)}</span>` : ""}
+        </div>
+        <div class="link-url-text" title="Clique para selecionar">${esc(md.url)}</div>
       </div>
       ${temSenha ? `<div class="link-senha-box">
         <button class="senha-toggle" data-action="senha" data-md-id="${esc(md.id)}">Ver senha</button>

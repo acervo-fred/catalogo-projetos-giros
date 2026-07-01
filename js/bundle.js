@@ -203,6 +203,45 @@ function openModal(opts) {
   return { close: closeModal };
 }
 
+function openTextModal(title, text) {
+  var nLinhas = text.split("\n").length;
+  var rows = Math.min(28, Math.max(8, nLinhas + 2));
+
+  var overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML =
+    '<div class="modal modal-text" role="dialog" aria-modal="true">'+
+      '<div class="modal-head"><div>'+
+        '<h2>'+esc(title)+'</h2>'+
+        '<div class="modal-sub">Selecione tudo ou parte do texto abaixo para copiar novamente.</div>'+
+      '</div>'+
+      '<button class="modal-close" type="button" aria-label="Fechar">&times;</button></div>'+
+      '<div class="modal-body">'+
+        '<textarea class="share-text-view" readonly rows="'+rows+'">'+esc(text)+'</textarea>'+
+      '</div>'+
+      '<div class="modal-foot">'+
+        '<button type="button" class="btn btn-ghost" data-close>Fechar</button>'+
+        '<button type="button" class="btn btn-primary" data-recopy>Copiar tudo</button>'+
+      '</div>'+
+    '</div>';
+
+  document.getElementById("modal-root").appendChild(overlay);
+
+  function closeModal() { overlay.remove(); document.removeEventListener("keydown", onKey); }
+  function onKey(e) { if(e.key==="Escape") closeModal(); }
+  document.addEventListener("keydown", onKey);
+  overlay.addEventListener("mousedown", function(e){ if(e.target===overlay) closeModal(); });
+  overlay.querySelector(".modal-close").addEventListener("click", closeModal);
+  overlay.querySelector("[data-close]").addEventListener("click", closeModal);
+  overlay.querySelector("[data-recopy]").addEventListener("click", function(){
+    navigator.clipboard.writeText(text).then(function(){ showCopyToast("Texto copiado"); }).catch(function(){});
+  });
+
+  var ta = overlay.querySelector(".share-text-view");
+  ta.focus();
+  ta.select();
+}
+
 function fText(name, label, opts) {
   opts = opts||{};
   var value = opts.value!=null?opts.value:"", type=opts.type||"text",
@@ -480,6 +519,24 @@ function abrirNovoLink(projetoId, existente, tipoForcado) {
   });
 }
 
+function abrirAlterarSenha(projetoId, link) {
+  openModal({
+    title: "Alterar senha do vídeo",
+    subtitle: link.titulo,
+    submitLabel: "Salvar nova senha",
+    bodyHtml:
+      '<div class="warning-banner">⚠️ <strong>Atenção:</strong> isso vai alterar a senha diretamente no vídeo no Vimeo (via API). '+
+      'Qualquer pessoa com a senha atual perde o acesso ao vídeo assim que a nova senha for salva.</div>'+
+      fText("novaSenha","Nova senha",{required:true,value:link.senha||"",placeholder:"Nova senha de acesso ao vídeo"}),
+    onSubmit: async function(form) {
+      var novaSenha = readVal(form,"novaSenha");
+      if (!novaSenha) throw new Error("Informe a nova senha.");
+      store.updateLink(projetoId, link.id, { senha: novaSenha });
+      showCopyToast("Senha atualizada");
+    }
+  });
+}
+
 /* ---- Marca d'água ---- */
 function abrirNovaMarcaDagua(projetoId, existente) {
   var ed = !!existente, md = existente||{};
@@ -624,14 +681,14 @@ var TIPO_META = {
 var STATUS_COR = { "Pendente":"amber","Em andamento":"blue","Concluída":"green","Cancelada":"gray" };
 
 var _toastTimer;
-function showCopyToast() {
+function showCopyToast(msg) {
   var t = document.getElementById("copy-toast");
   if (!t) {
     t = document.createElement("div");
     t.id = "copy-toast"; t.className = "copy-toast";
-    t.textContent = "Texto copiado para área de transferência";
     document.body.appendChild(t);
   }
+  t.textContent = msg || "Texto copiado para área de transferência";
   t.classList.add("show");
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(function(){ t.classList.remove("show"); }, 2000);
@@ -662,33 +719,55 @@ function buildGroupShareText(tipo, links, projetoNome) {
   return header+"\n\n"+items.join("\n\n");
 }
 
+function privCell(l) {
+  var m = PRIV_META[l.privacidade];
+  if (!m) return "";
+  if (l.privacidade!=='senha') return '<span class="priv-badge badge-'+m.cor+'">'+m.label+'</span>';
+
+  var conteudo = l.senha
+    ? '<span class="senha-popover-valor" data-copy="'+esc(l.senha)+'" title="Clique para copiar">'+esc(l.senha)+'</span>'+
+      '<span class="senha-popover-hint">Clique para copiar</span>'
+    : '<span class="senha-popover-aviso">⚠ Não é possível ver a senha</span>';
+
+  return '<span class="priv-badge-wrap" tabindex="0">'+
+      '<span class="priv-badge badge-'+m.cor+'">🔒 '+m.label+'</span>'+
+      '<span class="senha-popover">'+
+        '<span class="senha-popover-box">'+
+          conteudo+
+        '</span>'+
+      '</span>'+
+    '</span>';
+}
+
+function wrapTable(rowsHtml) {
+  return '<div class="videos-table-wrap"><table class="videos-table"><tbody>'+rowsHtml+'</tbody></table></div>';
+}
+
 function linkRow(l) {
-  var temSenha = l.privacidade==='senha' && !!l.senha;
   var badge = "";
-  if (l.temporada) badge = '<span class="ep-badge">T'+l.temporada+(l.numero?' E'+l.numero:'')+'</span> ';
-  else if (l.numero) badge = '<span class="ep-badge">Ep.'+l.numero+'</span> ';
-  return '<div class="link-item">'+
-    '<div class="link-info">'+
-      '<div class="link-titulo">'+badge+esc(l.titulo)+
-        (l.privacidade?' '+privBadge(l.privacidade):"")+
-        (temSenha?' <span class="lock-icon">🔒</span>':"")+
+  if (l.temporada) badge = '<span class="ep-badge">T'+l.temporada+(l.numero?' E'+l.numero:'')+'</span>';
+  else if (l.numero) badge = '<span class="ep-badge">Ep.'+l.numero+'</span>';
+  return '<tr class="link-row">'+
+    '<td class="col-code">'+badge+'</td>'+
+    '<td class="col-nome">'+esc(l.titulo)+'</td>'+
+    '<td class="col-link"><div class="link-priv-inline">'+
+      '<a href="'+esc(l.url)+'" target="_blank" rel="noopener" class="link-col-url" title="'+esc(l.url)+'">'+esc(l.url)+'</a>'+
+      privCell(l)+
+    '</div></td>'+
+    '<td class="col-acoes"><div class="row-actions">'+
+      (l.privacidade==='senha'
+        ? '<button class="labeled-btn" data-action="altsenha" data-link-id="'+esc(l.id)+'">🔑 Alterar senha</button>'
+        : "")+
+      '<button class="labeled-btn" data-action="copylink" data-copy-link="'+esc(l.url)+'">📋 Copiar link</button>'+
+      '<button class="labeled-btn" data-action="share" data-share-text="'+attrShare(buildShareText(l))+'">'+
+        '<img src="./Compartilhar.png" width="14" height="14" alt=""> Compartilhar'+
+      '</button>'+
+      '<div class="item-actions">'+
+        '<button class="icon-btn" data-action="edit" data-link-id="'+esc(l.id)+'" title="Editar">✎</button>'+
+        '<button class="icon-btn danger" data-action="del" data-link-id="'+esc(l.id)+'" title="Excluir">🗑</button>'+
       '</div>'+
-      '<a href="'+esc(l.url)+'" target="_blank" rel="noopener" class="link-url-text">'+esc(l.url)+'</a>'+
-    '</div>'+
-    '<button class="share-icon-btn" data-action="share" data-share-text="'+attrShare(buildShareText(l))+'" title="Copiar para compartilhar">'+
-      '<img src="./Compartilhar.png" width="18" height="18" alt="Compartilhar">'+
-    '</button>'+
-    (temSenha?
-      '<div class="link-senha-box">'+
-        '<button class="senha-toggle" data-action="senha" data-link-id="'+esc(l.id)+'">Ver senha</button>'+
-        '<span class="senha-valor">'+esc(l.senha)+'</span>'+
-        '<button class="copy-btn" data-copy="'+esc(l.senha)+'">Copiar</button>'+
-      '</div>':"")+
-    '<div class="item-actions">'+
-      '<button class="icon-btn" data-action="edit" data-link-id="'+esc(l.id)+'" title="Editar">✎</button>'+
-      '<button class="icon-btn danger" data-action="del" data-link-id="'+esc(l.id)+'" title="Excluir">🗑</button>'+
-    '</div>'+
-  '</div>';
+    '</div></td>'+
+  '</tr>';
 }
 
 function renderVideosPorTipo(links, projetoNome) {
@@ -701,10 +780,10 @@ function renderVideosPorTipo(links, projetoNome) {
       '<div class="link-grupo-titulo">'+
         '<span>'+meta.icon+" "+meta.label+'</span>'+
         '<button class="share-grupo-btn" data-action="share" data-share-text="'+grupoTxt+'" title="Compartilhar todos do grupo">'+
-          '<img src="./Compartilhar.png" width="14" height="14" alt="Compartilhar">'+
+          '<img src="./Compartilhar.png" width="14" height="14" alt=""> Compartilhar todos'+
         '</button>'+
       '</div>'+
-      grupos[tipo].map(linkRow).join("")+
+      wrapTable(grupos[tipo].map(linkRow).join(""))+
     '</div>';
   }).join("");
 }
@@ -747,7 +826,7 @@ function renderVitrine(p) {
   if (!vitrines.length) return '<div class="empty-tab">Nenhuma vitrine cadastrada ainda.<br>'+
     '<span style="font-size:13px;color:var(--text-soft);margin-top:6px;display:block">'+
     'Uma vitrine é um mostruário de vídeos no Vimeo — cada vídeo dentro dela tem sua própria privacidade.</span></div>';
-  return vitrines.map(linkRow).join("");
+  return wrapTable(vitrines.map(linkRow).join(""));
 }
 
 function renderMarcaDagua(p) {
@@ -807,12 +886,12 @@ function renderVideosTipo(p, tipo) {
     var html = keys.map(function(tNum){
       var tInfo = p.temporadas && p.temporadas.find(function(x){ return x.num===Number(tNum); });
       var tLabel = "Temporada "+tNum+(tInfo&&tInfo.ano?" · "+tInfo.ano:"")+(tInfo&&tInfo.totalEps?" · "+tInfo.totalEps+" episódios":"");
-      return '<div style="margin-bottom:28px"><div class="temp-header">'+tLabel+'</div>'+byTemp[tNum].map(linkRow).join("")+'</div>';
+      return '<div style="margin-bottom:28px"><div class="temp-header">'+tLabel+'</div>'+wrapTable(byTemp[tNum].map(linkRow).join(""))+'</div>';
     }).join("");
-    if (semTemp.length) html += '<div style="margin-bottom:28px"><div class="temp-header">Gerais</div>'+semTemp.map(linkRow).join("")+'</div>';
+    if (semTemp.length) html += '<div style="margin-bottom:28px"><div class="temp-header">Gerais</div>'+wrapTable(semTemp.map(linkRow).join(""))+'</div>';
     return html;
   }
-  return links.map(linkRow).join("");
+  return wrapTable(links.map(linkRow).join(""));
 }
 
 function renderProjeto(app, id) {
@@ -832,6 +911,15 @@ function renderProjeto(app, id) {
       '</div>';
     }).join("");
   }
+
+  /* linha de info ao lado do título: ano · nº de episódios · nº de temporadas */
+  var nEpisodios = p.links.filter(function(l){ return l.tipo==='episodio'; }).length;
+  var headerInfoParts = [esc(p.ano || "—")];
+  if (nEpisodios) headerInfoParts.push(nEpisodios + (nEpisodios===1?" episódio":" episódios"));
+  if (p.categoria==="Série" && p.temporadas && p.temporadas.length > 1) {
+    headerInfoParts.push(p.temporadas.length+" temporadas");
+  }
+  var headerInfoLine = headerInfoParts.join(" · ");
 
   /* tipos presentes (excluindo vitrine) para gerar abas dinâmicas */
   var tiposPresentes = Object.keys(TIPO_META).filter(function(t){
@@ -893,8 +981,12 @@ function renderProjeto(app, id) {
       '</div>'+
       '<div class="proj-detail-main">'+
         '<h1 class="proj-title">'+esc(p.nome)+'</h1>'+
+        '<div class="proj-header-info">'+headerInfoLine+'</div>'+
         (p.sinopse?'<p class="proj-sinopse">'+esc(p.sinopse)+'</p>':"")+
-        '<div class="tabs">'+tabsHtml+'</div>'+
+        '<div class="proj-tabs-row">'+
+          '<div class="tabs">'+tabsHtml+'</div>'+
+          '<button class="btn btn-ghost btn-solicitar" id="btn-solicitar" disabled title="Em breve">Solicitar versão</button>'+
+        '</div>'+
         panelsHtml+
       '</div>'+
     '</div>';
@@ -921,18 +1013,30 @@ function renderProjeto(app, id) {
   function handleShare(e) {
     var btn = e.target.closest("[data-action='share']");
     if (!btn) return;
-    navigator.clipboard.writeText(btn.dataset.shareText).then(showCopyToast).catch(function(){});
+    var text = btn.dataset.shareText;
+    navigator.clipboard.writeText(text).catch(function(){});
+    openTextModal("Texto copiado", text);
   }
 
   function linkDelegacao(el) {
     el.addEventListener("click", function(e){
       if (e.target.closest("[data-action='share']")) { handleShare(e); return; }
+      var copyLinkBtn = e.target.closest("[data-action='copylink']");
+      if (copyLinkBtn) {
+        navigator.clipboard.writeText(copyLinkBtn.dataset.copyLink)
+          .then(function(){ showCopyToast("Link copiado"); })
+          .catch(function(){});
+        return;
+      }
       var lid = e.target.dataset.linkId, action = e.target.dataset.action, copy = e.target.dataset.copy;
-      if (copy !== undefined) { navigator.clipboard.writeText(copy).catch(function(){}); return; }
-      if (action==="senha") { var box=e.target.closest(".link-senha-box"); if(box) box.classList.toggle("revealed"); return; }
+      if (copy !== undefined) {
+        navigator.clipboard.writeText(copy).then(function(){ showCopyToast("Senha copiada"); }).catch(function(){});
+        return;
+      }
       if (!lid) return;
       var link = p.links.find(function(l){ return l.id===lid; }); if (!link) return;
       if (action==="edit") { abrirNovoLink(p.id, link); return; }
+      if (action==="altsenha") { abrirAlterarSenha(p.id, link); return; }
       if (action==="del") { if (!confirm('Excluir o link "'+link.titulo+'"?')) return; store.removeLink(p.id, lid); }
     });
   }
@@ -942,7 +1046,10 @@ function renderProjeto(app, id) {
 
   document.getElementById("tab-marca").addEventListener("click", function(e){
     var mid = e.target.dataset.mdId, action = e.target.dataset.action, copy = e.target.dataset.copy;
-    if (copy !== undefined) { navigator.clipboard.writeText(copy).catch(function(){}); return; }
+    if (copy !== undefined) {
+      navigator.clipboard.writeText(copy).then(function(){ showCopyToast("Senha copiada"); }).catch(function(){});
+      return;
+    }
     if (action==="senha") { var box=e.target.closest(".link-senha-box"); if(box) box.classList.toggle("revealed"); return; }
     if (!mid) return;
     var md = p.marcaDagua.find(function(x){ return x.id===mid; }); if (!md) return;

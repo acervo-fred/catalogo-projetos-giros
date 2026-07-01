@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Giros — Teste API Vimeo</title>
+<style>
+  body { font-family: -apple-system, sans-serif; background:#16151a; color:#ece8e0; padding:28px; max-width:900px; margin:0 auto; }
+  h1 { font-size:20px; margin-bottom:4px; }
+  p.hint { color:#918d9d; font-size:13px; margin-bottom:20px; }
+  .row { display:flex; gap:8px; margin-bottom:12px; }
+  input[type=password], input[type=text] {
+    flex:1; padding:8px 10px; border-radius:4px; border:1px solid #34323c;
+    background:#1e1d24; color:#ece8e0; font-size:14px;
+  }
+  button {
+    padding:8px 16px; border-radius:4px; border:1px solid #34323c;
+    background:#26242d; color:#ece8e0; cursor:pointer; font-size:14px;
+  }
+  button:hover { background:#34323c; }
+  button.primary { background:#3b6fe0; border-color:#3b6fe0; }
+  #status { font-size:13px; margin-bottom:16px; min-height:18px; }
+  #status.erro { color:#e0645a; }
+  #status.ok { color:#6ea896; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  td, th { padding:8px 10px; border-bottom:1px solid #34323c; text-align:left; vertical-align:top; }
+  th { color:#918d9d; font-weight:600; text-transform:uppercase; font-size:11px; }
+  a { color:#3b6fe0; }
+  code { background:#26242d; padding:1px 5px; border-radius:3px; font-size:12px; }
+  details { margin-top:24px; }
+  pre { background:#1e1d24; padding:12px; border-radius:4px; overflow-x:auto; font-size:12px; }
+</style>
+</head>
+<body>
+
+<h1>Teste da API do Vimeo</h1>
+<p class="hint">Protótipo isolado — não mexe no catálogo. O token fica só no localStorage deste navegador.</p>
+
+<div class="row">
+  <input type="password" id="token" placeholder="Cole aqui o Personal Access Token do Vimeo">
+  <button id="btn-salvar">Salvar token</button>
+</div>
+
+<div class="row">
+  <button class="primary" id="btn-buscar">Buscar meus vídeos</button>
+</div>
+
+<div id="status"></div>
+
+<table id="tabela" style="display:none">
+  <thead>
+    <tr><th>Nome</th><th>Privacidade</th><th>Duração</th><th>Link</th><th>vimeo_id</th></tr>
+  </thead>
+  <tbody id="tbody"></tbody>
+</table>
+
+<details>
+  <summary style="cursor:pointer;color:#918d9d;font-size:12px;margin-top:20px">Ver resposta bruta (JSON)</summary>
+  <pre id="raw"></pre>
+</details>
+
+<script>
+const TOKEN_KEY = "vimeo_pat_teste";
+
+const tokenInput = document.getElementById("token");
+const statusEl = document.getElementById("status");
+const tabela = document.getElementById("tabela");
+const tbody = document.getElementById("tbody");
+const rawEl = document.getElementById("raw");
+
+const tokenSalvo = localStorage.getItem(TOKEN_KEY);
+if (tokenSalvo) tokenInput.value = tokenSalvo;
+
+document.getElementById("btn-salvar").addEventListener("click", () => {
+  const t = tokenInput.value.trim();
+  if (!t) { setStatus("Cole um token antes de salvar.", "erro"); return; }
+  localStorage.setItem(TOKEN_KEY, t);
+  setStatus("Token salvo neste navegador.", "ok");
+});
+
+document.getElementById("btn-buscar").addEventListener("click", buscarVideos);
+
+function setStatus(msg, tipo) {
+  statusEl.textContent = msg;
+  statusEl.className = tipo || "";
+}
+
+function formatDuracao(segundos) {
+  if (!segundos && segundos !== 0) return "—";
+  const m = Math.floor(segundos / 60), s = segundos % 60;
+  return m + "min " + String(s).padStart(2, "0") + "s";
+}
+
+function extrairVimeoId(uri) {
+  const m = String(uri || "").match(/\/videos\/(\d+)/);
+  return m ? m[1] : "—";
+}
+
+async function buscarVideos() {
+  const token = tokenInput.value.trim() || localStorage.getItem(TOKEN_KEY);
+  if (!token) { setStatus("Cole e salve o token primeiro.", "erro"); return; }
+
+  const btn = document.getElementById("btn-buscar");
+  if (btn.disabled) return;
+  btn.disabled = true;
+
+  setStatus("Buscando...", "");
+  tabela.style.display = "none";
+  rawEl.textContent = "";
+
+  try {
+    const resp = await fetch(
+      "https://api.vimeo.com/me/videos?per_page=15&fields=uri,name,link,privacy.view,duration",
+      {
+        headers: {
+          "Authorization": "Bearer " + token,
+          "Accept": "application/vnd.vimeo.*+json;version=3.4"
+        }
+      }
+    );
+
+    if (!resp.ok) {
+      const corpo = await resp.text();
+      let msg = "";
+      try { msg = JSON.parse(corpo).error || ""; } catch (_) {}
+      if (resp.status === 401) {
+        setStatus("Token inválido ou sem permissão (401). Confira se gerou com escopo Public + Private.", "erro");
+      } else if (resp.status === 429) {
+        setStatus("Limite de requisições da API atingido — espere cerca de 1 minuto e tente de novo.", "erro");
+      } else {
+        setStatus("Erro " + resp.status + (msg ? ": " + msg : "") + " — veja o JSON bruto abaixo.", "erro");
+      }
+      rawEl.textContent = corpo;
+      return;
+    }
+
+    const data = await resp.json();
+    rawEl.textContent = JSON.stringify(data, null, 2);
+
+    if (!data.data || !data.data.length) {
+      setStatus("Nenhum vídeo encontrado nessa conta.", "erro");
+      return;
+    }
+
+    tbody.innerHTML = data.data.map(v => `
+      <tr>
+        <td>${escapeHtml(v.name || "(sem título)")}</td>
+        <td>${escapeHtml(v.privacy && v.privacy.view || "—")}</td>
+        <td>${formatDuracao(v.duration)}</td>
+        <td><a href="${escapeHtml(v.link)}" target="_blank">${escapeHtml(v.link)}</a></td>
+        <td><code>${extrairVimeoId(v.uri)}</code></td>
+      </tr>
+    `).join("");
+
+    tabela.style.display = "table";
+    setStatus(`${data.data.length} vídeo(s) encontrado(s) de um total de ${data.total || "?"} na conta.`, "ok");
+  } catch (e) {
+    setStatus("Falha de rede/CORS ao chamar a API — veja o console do navegador (F12).", "erro");
+    console.error(e);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function escapeHtml(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+</script>
+
+</body>
+</html>

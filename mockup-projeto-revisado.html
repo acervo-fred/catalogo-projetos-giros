@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Giros — Imortais da Academia</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=Oswald:wght@500;600;700&display=swap');
+
+:root{
+  --color1: #0e8008;
+  --color2: #0b6006;
+  --color3: #074004;
+  --color4: #042002;
+  --color5: #000000;
+
+  --bg: #f4f6f4;
+  --panel: #ffffff;
+  --panel-2: #f0f7ef;
+  --line: #e1e5e0;
+  --text: #1c1f1c;
+  --text-dim: #6f766e;
+  --green: var(--color1);
+  --green-dark: var(--color2);
+  --green-tint: #e6f4e4;
+  --amber: #c17a1f;
+  --amber-tint: #fbf1e2;
+  --red: #b8433a;
+  --radius: 6px;
+  --font-display: 'Oswald', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+}
+
+*{ box-sizing: border-box; margin:0; padding:0; }
+body{ background: var(--bg); color: var(--text); font-family: var(--font-body); font-size: 14px; }
+button{ font-family: inherit; cursor: pointer; }
+button:focus-visible, input:focus-visible, [tabindex]:focus-visible{
+  outline: 2px solid var(--green); outline-offset: 2px;
+}
+
+/* topbar */
+.topbar{
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 28px; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.brand{ font-family: var(--font-display); font-weight: 700; font-size: 19px; letter-spacing: 0.02em; color: var(--text); }
+.brand span{ color: var(--green); }
+.topbar-context{ font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+
+.btn{
+  font-size: 12.5px; font-weight: 500; padding: 8px 14px; border-radius: var(--radius);
+  border: 1px solid var(--line); background: var(--panel); color: var(--text);
+}
+.btn:hover{ border-color: #c7ccc6; background: #fafbfa; }
+.btn-primary{ background: var(--green); color: #ffffff; border: 1px solid var(--green); font-weight: 600; }
+.btn-primary:hover{ background: var(--green-dark); border-color: var(--green-dark); }
+
+/* content */
+.content{ padding: 26px 32px 60px; max-width: 1180px; margin: 0 auto; }
+
+.back-link{
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; color: var(--text-dim); margin-bottom: 20px; text-decoration: none;
+}
+.back-link:hover{ color: var(--text); }
+
+.project-layout{ display: grid; grid-template-columns: 200px 1fr; gap: 28px; }
+
+/* poster column */
+.poster-col{ display: flex; flex-direction: column; gap: 14px; }
+.poster{
+  width: 100%; aspect-ratio: 3/4; border-radius: var(--radius); overflow: hidden;
+  background: linear-gradient(160deg, #cfe3cc, #eef4ec);
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line);
+}
+.poster-label{ font-family: var(--font-display); font-size: 13px; color: #4c5a49; text-align: center; padding: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+
+.meta-block{ font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); line-height: 1.7; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; }
+.meta-block strong{ color: var(--text); font-weight: 500; }
+
+.menu-more{ position: relative; }
+.menu-more-btn{
+  width: 100%; text-align: left; background: var(--panel); border: 1px solid var(--line);
+  color: var(--text-dim); font-size: 12px; padding: 8px 10px; border-radius: var(--radius);
+}
+.menu-more-btn:hover{ color: var(--text); border-color: #c7ccc6; }
+.more-dropdown{
+  margin-top: 6px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel); display: none; overflow: hidden; box-shadow: 0 4px 14px rgba(0,0,0,0.06);
+}
+.more-dropdown.show{ display: block; }
+.more-dropdown button{
+  display: block; width: 100%; text-align: left; background: transparent; border: none;
+  color: var(--text); font-size: 12.5px; padding: 9px 12px;
+}
+.more-dropdown button:hover{ background: var(--panel-2); }
+.more-dropdown button.danger{ color: var(--red); }
+
+/* main col */
+.main-col{ min-width: 0; }
+
+.project-header{
+  display: flex; align-items: flex-start; justify-content: space-between;
+  margin-bottom: 6px; gap: 16px;
+}
+.project-title{ font-family: var(--font-display); font-size: 28px; font-weight: 600; color: var(--text); }
+.project-header-actions{ display: flex; gap: 8px; flex-shrink: 0; }
+
+.season-line{
+  font-family: var(--font-mono); font-size: 11px; color: var(--green-dark);
+  text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 20px; font-weight: 600;
+}
+.season-line span{ color: var(--text-dim); font-weight: 400; }
+
+/* tabs */
+.tabs{ display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
+.tab{
+  font-family: var(--font-mono); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 9px 4px; margin-right: 20px; color: var(--text-dim); border-bottom: 2px solid transparent;
+  background: transparent; border-top: none; border-left: none; border-right: none;
+  display: flex; align-items: center; gap: 6px;
+}
+.tab:hover{ color: var(--text); }
+.tab.active{ color: var(--green-dark); border-bottom-color: var(--green); }
+.tab-count{
+  font-size: 10px; background: #eef1ee; color: var(--text-dim); padding: 1px 6px; border-radius: 999px;
+}
+.tab.active .tab-count{ background: var(--green-tint); color: var(--green-dark); }
+
+/* group */
+.group{ margin-bottom: 28px; }
+.group-title{
+  display: flex; align-items: center; justify-content: space-between;
+  font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--text-dim); padding: 8px 0; border-bottom: 1px solid var(--line); margin-bottom: 2px;
+}
+
+.table-wrap{ border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--panel); }
+table{ width: 100%; border-collapse: collapse; }
+tbody tr{ border-bottom: 1px solid var(--line); }
+tbody tr:last-child{ border-bottom: none; }
+tbody tr:hover{ background: var(--panel-2); }
+tbody td{ padding: 10px 12px; font-size: 13px; vertical-align: middle; }
+
+.cell-code{
+  font-family: var(--font-mono); font-size: 11px; color: var(--green-dark);
+  background: var(--green-tint); padding: 2px 7px; border-radius: 3px; white-space: nowrap; font-weight: 500;
+}
+
+.cell-name{ color: var(--text); }
+
+.pill{
+  display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 10.5px;
+  padding: 3px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.02em; white-space: nowrap;
+}
+.pill-open{ background: var(--green-tint); color: var(--green-dark); }
+.pill-unlisted{ background: #eef1ee; color: var(--text-dim); }
+.pill-embed{ background: var(--green-tint); color: var(--green-dark); }
+
+.pass-cell{ display: flex; align-items: center; gap: 8px; }
+.pass-value{
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--amber);
+  background: var(--amber-tint); border: 1px solid #ecd3ab;
+  padding: 2px 8px; border-radius: 3px;
+}
+.pass-none{ font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+
+.row-actions{ display: flex; gap: 4px; justify-content: flex-end; }
+.icon-btn{
+  background: var(--panel); border: 1px solid var(--line); color: var(--text-dim);
+  font-size: 11px; padding: 5px 9px; border-radius: var(--radius); font-family: var(--font-body);
+  white-space: nowrap;
+}
+.icon-btn:hover{ color: var(--text); border-color: #c7ccc6; }
+
+.toast{
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
+  background: var(--text); color: #fff; border: 1px solid var(--text);
+  padding: 10px 18px; border-radius: var(--radius); font-size: 12.5px; font-family: var(--font-mono);
+  opacity: 0; pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease; z-index: 50;
+}
+.toast.show{ opacity: 1; transform: translateX(-50%) translateY(0); }
+
+.annotation{
+  margin-top: 40px; padding: 14px 16px; border: 1px dashed var(--line); border-radius: var(--radius);
+  font-size: 12px; color: var(--text-dim); line-height: 1.6; background: var(--panel);
+}
+.annotation strong{ color: var(--green-dark); font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+
+@media (max-width: 720px){
+  .project-layout{ grid-template-columns: 1fr; }
+  .poster-col{ flex-direction: row; align-items: center; }
+  .poster{ width: 100px; }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">GIR<span>O</span>S</div>
+  <div class="topbar-context">Catálogo de Masters · Vimeo</div>
+</div>
+
+<div class="content">
+  <a href="#" class="back-link">← Voltar ao catálogo</a>
+
+  <div class="project-layout">
+
+    <div class="poster-col">
+      <div class="poster"><div class="poster-label">Imortais<br>da Academia</div></div>
+      <div class="meta-block">
+        <strong>Categoria</strong> Série<br>
+        <strong>Temporadas</strong> 1<br>
+        <strong>Ano</strong> 2017<br>
+        <strong>Episódios</strong> 42
+      </div>
+      <button class="btn btn-primary" style="width:100%">+ Adicionar link</button>
+      <div class="menu-more">
+        <button class="menu-more-btn" id="moreBtn">⋯ Mais opções</button>
+        <div class="more-dropdown" id="moreDropdown">
+          <button>Editar projeto</button>
+          <button>Duplicar</button>
+          <button class="danger" id="deleteBtn">Excluir projeto</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="main-col">
+      <div class="project-header">
+        <div class="project-title">Imortais da Academia</div>
+        <div class="project-header-actions">
+          <button class="btn">Solicitar versão</button>
+        </div>
+      </div>
+      <div class="season-line">TEMPORADA 1 <span>· 2017 · 42 EPISÓDIOS</span></div>
+
+      <div class="tabs">
+        <button class="tab active">Tudo <span class="tab-count">11</span></button>
+        <button class="tab">Master <span class="tab-count">7</span></button>
+        <button class="tab">Teaser <span class="tab-count">3</span></button>
+        <button class="tab">Outros <span class="tab-count">1</span></button>
+        <button class="tab">Marca d'água <span class="tab-count">0</span></button>
+      </div>
+
+      <div class="group">
+        <div class="group-title">🎬 Master</div>
+        <div class="table-wrap">
+          <table>
+            <tbody id="masterBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="group-title">✦ Teaser</div>
+        <div class="table-wrap">
+          <table>
+            <tbody id="teaserBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="annotation">
+        <strong>O que mudou aqui</strong><br>
+        Voltamos ao branco padrão da sua versão original, mas com o verde da paleta aplicado só onde tem função: botão primário, código do episódio, aba ativa e status "disponível". Senha continua visível na linha (com botão de copiar), URL crua saiu da tabela, e "Excluir" foi para dentro de "Mais opções".
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast">Link copiado</div>
+
+<script>
+const masterRows = [
+  { code: 'T1 E1', name: 'Cadeira 01', senha: '9x2k-fort' },
+  { code: 'T1 E2', name: 'Cadeira 02', senha: '9x2k-fort' },
+  { code: 'T1 E3', name: 'Cadeira 03', senha: '9x2k-fort' },
+  { code: 'T1 E4', name: 'Cadeira 04', senha: '9x2k-fort' },
+  { code: 'T1 E5', name: 'Cadeira 05', senha: '9x2k-fort' },
+  { code: 'T1 E6', name: 'Cadeira 06', senha: '9x2k-fort' },
+  { code: 'T1 E7', name: 'Cadeira 07', senha: '9x2k-fort' },
+];
+
+const teaserRows = [
+  { code: 'T1', name: 'Imortais da Academia — Teaser', status: 'embed' },
+  { code: 'T1', name: 'Imortais da Academia — Teaser', senha: 'giros24' },
+  { code: 'T1', name: 'Teaser créditos 2017-05-05', status: 'unlisted' },
+];
+
+function renderMaster(){
+  const body = document.getElementById('masterBody');
+  body.innerHTML = masterRows.map(r => `
+    <tr>
+      <td><span class="cell-code">${r.code}</span></td>
+      <td class="cell-name">${r.name}</td>
+      <td>
+        <div class="pass-cell">
+          <span class="pass-value">${r.senha}</span>
+          <button class="icon-btn copy-pass">Copiar senha</button>
+        </div>
+      </td>
+      <td>
+        <div class="row-actions">
+          <button class="icon-btn copy-link">Copiar link</button>
+          <button class="icon-btn">Abrir</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+  body.querySelectorAll('.copy-pass').forEach(b => b.addEventListener('click', () => showToast('Senha copiada')));
+  body.querySelectorAll('.copy-link').forEach(b => b.addEventListener('click', () => showToast('Link copiado')));
+}
+
+function renderTeaser(){
+  const body = document.getElementById('teaserBody');
+  body.innerHTML = teaserRows.map(r => `
+    <tr>
+      <td><span class="cell-code">${r.code}</span></td>
+      <td class="cell-name">${r.name}</td>
+      <td>
+        ${r.senha
+          ? `<div class="pass-cell"><span class="pass-value">${r.senha}</span><button class="icon-btn copy-pass">Copiar senha</button></div>`
+          : r.status === 'embed'
+            ? `<span class="pill pill-embed">Incorporado</span>`
+            : `<span class="pill pill-unlisted">Não listado</span>`
+        }
+      </td>
+      <td>
+        <div class="row-actions">
+          <button class="icon-btn copy-link">Copiar link</button>
+          <button class="icon-btn">Abrir</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+  body.querySelectorAll('.copy-pass').forEach(b => b.addEventListener('click', () => showToast('Senha copiada')));
+  body.querySelectorAll('.copy-link').forEach(b => b.addEventListener('click', () => showToast('Link copiado')));
+}
+
+function showToast(msg){
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2000);
+}
+
+document.getElementById('moreBtn').addEventListener('click', () => {
+  document.getElementById('moreDropdown').classList.toggle('show');
+});
+document.addEventListener('click', (e) => {
+  if(!e.target.closest('.menu-more')) document.getElementById('moreDropdown').classList.remove('show');
+});
+
+renderMaster();
+renderTeaser();
+</script>
+
+</body>
+</html>

@@ -98,6 +98,7 @@ function extrairVimeoId(uri) {
 async function buscarVideos() {
   const token = tokenInput.value.trim() || localStorage.getItem(TOKEN_KEY);
   if (!token) { setStatus("Cole e salve o token primeiro.", "erro"); return; }
+  localStorage.setItem(TOKEN_KEY, token); // garante que fica salvo mesmo sem clicar em "Salvar token"
 
   const btn = document.getElementById("btn-buscar");
   if (btn.disabled) return;

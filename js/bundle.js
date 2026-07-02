@@ -5,6 +5,10 @@
 /* Email para notificações de demandas — altere aqui */
 var EMAIL_DEMANDAS = "acervo@girostraffic.page";
 
+/* Token da API do Vimeo — mesma chave usada em vimeo-teste.html, para reaproveitar
+   o token já salvo lá sem precisar colar de novo. */
+var VIMEO_TOKEN_KEY = "vimeo_pat_teste";
+
 /* ============================================================
    STORE
    ============================================================ */
@@ -23,6 +27,19 @@ function saveDb() {
   localStorage.setItem(LS_KEY, JSON.stringify(db));
   _listeners.forEach(function(fn) { try { fn(); } catch(_) {} });
 }
+
+/* Migração: "Episódio" deixou de ser um tipo separado — episódio é master
+   (a diferenciação já é feita pelos campos temporada/número). */
+(function migrarTipoEpisodio() {
+  var mudou = false;
+  (db.projetos || []).forEach(function(p) {
+    (p.links || []).forEach(function(l) {
+      if (l.tipo === "episodio") { l.tipo = "master"; mudou = true; }
+    });
+  });
+  if (mudou) saveDb();
+})();
+
 var store = {
   onChange: function(fn) { _listeners.push(fn); },
   listProjetos: function() {
@@ -139,6 +156,92 @@ async function fetchVimeoTitle(url) {
   } catch(e) {
     console.warn("[Vimeo oEmbed] erro:", e);
     return null;
+  }
+}
+
+/* Mapeia privacy.view da API do Vimeo pros nossos valores internos */
+var VIMEO_PRIV_MAP = {
+  anybody:  "publico",
+  unlisted: "nao_listado",
+  password: "senha",
+  disable:  "incorporado",
+  nobody:   "privado",
+  contacts: "privado",
+  users:    "privado"
+};
+
+function extrairVimeoId(url) {
+  var m = String(url||"").match(/vimeo\.com\/(?:.*\/)?(\d+)/);
+  return m ? m[1] : null;
+}
+
+/* Busca título + privacidade via API autenticada (funciona mesmo pra vídeo privado/com senha).
+   Retorna null se não houver token salvo, o id não puder ser extraído, ou a chamada falhar. */
+async function fetchVimeoDadosApi(url) {
+  var token = localStorage.getItem(VIMEO_TOKEN_KEY);
+  var id = extrairVimeoId(url);
+  console.log("[Vimeo API] token presente:", !!token, "| id extraído:", id, "| url:", url);
+  if (!token) { console.warn("[Vimeo API] sem token salvo em localStorage['"+VIMEO_TOKEN_KEY+"']."); return null; }
+  if (!id) { console.warn("[Vimeo API] não consegui extrair o id numérico dessa URL."); return null; }
+  try {
+    var ctrl = new AbortController();
+    var t = setTimeout(function(){ ctrl.abort(); }, 5000);
+    var res = await fetch("https://api.vimeo.com/videos/" + id + "?fields=name,privacy.view", {
+      signal: ctrl.signal,
+      headers: {
+        "Authorization": "Bearer " + token,
+        "Accept": "application/vnd.vimeo.*+json;version=3.4"
+      }
+    });
+    clearTimeout(t);
+    console.log("[Vimeo API] status:", res.status);
+    if (!res.ok) {
+      var corpoErro = await res.text();
+      console.warn("[Vimeo API] resposta de erro:", corpoErro);
+      return null;
+    }
+    var data = await res.json();
+    console.log("[Vimeo API] dados recebidos:", data);
+    return {
+      titulo: data.name || null,
+      privacidade: VIMEO_PRIV_MAP[data.privacy && data.privacy.view] || null
+    };
+  } catch(e) {
+    console.warn("[Vimeo API] erro:", e);
+    return null;
+  }
+}
+
+/* Altera a senha do vídeo de verdade no Vimeo (requer token com escopo Edit).
+   Lança erro (com mensagem amigável) se algo der errado — quem chama decide o que fazer. */
+async function alterarSenhaVimeoApi(url, novaSenha) {
+  var token = localStorage.getItem(VIMEO_TOKEN_KEY);
+  var id = extrairVimeoId(url);
+  if (!token) throw new Error("Nenhum token da API do Vimeo configurado (veja vimeo-teste.html).");
+  if (!id) throw new Error("Não consegui identificar o ID do vídeo nessa URL.");
+
+  var res = await fetch("https://api.vimeo.com/videos/" + id, {
+    method: "PATCH",
+    headers: {
+      "Authorization": "Bearer " + token,
+      "Content-Type": "application/json",
+      "Accept": "application/vnd.vimeo.*+json;version=3.4"
+    },
+    body: JSON.stringify({ privacy: { view: "password" }, password: novaSenha })
+  });
+
+  if (!res.ok) {
+    var corpo = await res.text();
+    var msg = "";
+    try { msg = JSON.parse(corpo).error || ""; } catch(_) {}
+    console.warn("[Vimeo API] erro ao alterar senha:", res.status, corpo);
+    if (res.status === 401 || res.status === 403) {
+      throw new Error("Sem permissão pra alterar (o token provavelmente não tem escopo Edit).");
+    }
+    if (res.status === 429) {
+      throw new Error("Limite de requisições da API atingido — espere um minuto e tente de novo.");
+    }
+    throw new Error("Erro " + res.status + (msg ? ": " + msg : "") + " ao alterar a senha no Vimeo.");
   }
 }
 
@@ -275,7 +378,7 @@ function readVal(form, name) {
    ============================================================ */
 var CATEGORIAS = ["Documentário","Filme","Série","Curta","Institucional","Outro"];
 var TIPOS_LINK = [
-  {value:"master",label:"Master"},{value:"episodio",label:"Episódio"},
+  {value:"master",label:"Master"},
   {value:"trailer",label:"Trailer"},{value:"teaser",label:"Teaser"},
   {value:"promo",label:"Promo"},{value:"vitrine",label:"Vitrine Vimeo"},
   {value:"outro",label:"Outro"}
@@ -476,26 +579,41 @@ function abrirNovoLink(projetoId, existente, tipoForcado) {
       var urlInput = form.querySelector("#f_url");
       var tituloInput = form.querySelector("#f_titulo");
       var hint = form.querySelector("#vimeo-hint");
-      async function tentarBuscarTitulo(url) {
-        if (!url || tituloInput.value.trim()) return;
-        hint.textContent = "Buscando título no Vimeo…";
+      var temToken = !!localStorage.getItem(VIMEO_TOKEN_KEY);
+      if (!temToken) {
+        hint.textContent = "💡 Sem token da API do Vimeo configurado — só dá pra buscar o título (vídeos públicos). Configure em vimeo-teste.html pra também preencher a privacidade.";
         hint.style.display = "block";
+      }
+
+      async function tentarBuscarDados(url) {
+        if (!url) return;
+        hint.textContent = "Buscando dados no Vimeo…";
+        hint.style.display = "block";
+
+        var viaApi = await fetchVimeoDadosApi(url);
+        if (viaApi) {
+          if (viaApi.titulo && !tituloInput.value.trim()) tituloInput.value = viaApi.titulo;
+          if (viaApi.privacidade) { privSelect.value = viaApi.privacidade; toggleSenha(); }
+          hint.textContent = "Título e privacidade preenchidos via API do Vimeo.";
+          setTimeout(function(){ hint.style.display = "none"; }, 2500);
+          return;
+        }
+
+        if (tituloInput.value.trim()) { hint.style.display = "none"; return; }
         var title = await fetchVimeoTitle(url);
-        if (title && !tituloInput.value.trim()) {
+        if (title) {
           tituloInput.value = title;
           hint.style.display = "none";
-        } else if (!tituloInput.value.trim()) {
-          hint.textContent = "Não foi possível buscar o título (vídeo privado). Preencha manualmente.";
         } else {
-          hint.style.display = "none";
+          hint.textContent = "Não foi possível buscar os dados automaticamente. Preencha manualmente.";
         }
       }
       urlInput.addEventListener("paste", function(e) {
         var colado = (e.clipboardData || window.clipboardData).getData("text").trim();
-        setTimeout(function(){ tentarBuscarTitulo(colado); }, 0);
+        setTimeout(function(){ tentarBuscarDados(colado); }, 0);
       });
       urlInput.addEventListener("blur", function() {
-        tentarBuscarTitulo(urlInput.value.trim());
+        tentarBuscarDados(urlInput.value.trim());
       });
     },
 
@@ -531,8 +649,9 @@ function abrirAlterarSenha(projetoId, link) {
     onSubmit: async function(form) {
       var novaSenha = readVal(form,"novaSenha");
       if (!novaSenha) throw new Error("Informe a nova senha.");
+      await alterarSenhaVimeoApi(link.url, novaSenha);
       store.updateLink(projetoId, link.id, { senha: novaSenha });
-      showCopyToast("Senha atualizada");
+      showCopyToast("Senha atualizada no Vimeo");
     }
   });
 }
@@ -671,12 +790,11 @@ function renderHome(app) {
    ============================================================ */
 var TIPO_META = {
   master:   {label:"Master",        icon:"🎬",ordem:0},
-  episodio: {label:"Episódios",     icon:"📺",ordem:1},
-  trailer:  {label:"Trailer",       icon:"▶", ordem:2},
-  teaser:   {label:"Teaser",        icon:"✦", ordem:3},
-  promo:    {label:"Promo",         icon:"📣",ordem:4},
-  vitrine:  {label:"Vitrine Vimeo", icon:"🗂",ordem:5},
-  outro:    {label:"Outros",        icon:"🔗",ordem:6}
+  trailer:  {label:"Trailer",       icon:"▶", ordem:1},
+  teaser:   {label:"Teaser",        icon:"✦", ordem:2},
+  promo:    {label:"Promo",         icon:"📣",ordem:3},
+  vitrine:  {label:"Vitrine Vimeo", icon:"🗂",ordem:4},
+  outro:    {label:"Outros",        icon:"🔗",ordem:5}
 };
 var STATUS_COR = { "Pendente":"amber","Em andamento":"blue","Concluída":"green","Cancelada":"gray" };
 
@@ -743,6 +861,12 @@ function wrapTable(rowsHtml) {
   return '<div class="videos-table-wrap"><table class="videos-table"><tbody>'+rowsHtml+'</tbody></table></div>';
 }
 
+function ordenarPorTitulo(arr) {
+  return arr.slice().sort(function(a, b) {
+    return (a.titulo || "").localeCompare(b.titulo || "", "pt-BR", { numeric: true, sensitivity: "base" });
+  });
+}
+
 function linkRow(l) {
   var badge = "";
   if (l.temporada) badge = '<span class="ep-badge">T'+l.temporada+(l.numero?' E'+l.numero:'')+'</span>';
@@ -775,7 +899,8 @@ function renderVideosPorTipo(links, projetoNome) {
   links.forEach(function(l){ if(!grupos[l.tipo]) grupos[l.tipo]=[]; grupos[l.tipo].push(l); });
   return Object.keys(TIPO_META).filter(function(t){ return grupos[t]; }).map(function(tipo){
     var meta = TIPO_META[tipo];
-    var grupoTxt = attrShare(buildGroupShareText(tipo, grupos[tipo], projetoNome||""));
+    var linksOrdenados = ordenarPorTitulo(grupos[tipo]);
+    var grupoTxt = attrShare(buildGroupShareText(tipo, linksOrdenados, projetoNome||""));
     return '<div class="link-grupo">'+
       '<div class="link-grupo-titulo">'+
         '<span>'+meta.icon+" "+meta.label+'</span>'+
@@ -783,7 +908,7 @@ function renderVideosPorTipo(links, projetoNome) {
           '<img src="./Compartilhar.png" width="14" height="14" alt=""> Compartilhar todos'+
         '</button>'+
       '</div>'+
-      wrapTable(grupos[tipo].map(linkRow).join(""))+
+      wrapTable(linksOrdenados.map(linkRow).join(""))+
     '</div>';
   }).join("");
 }
@@ -826,12 +951,12 @@ function renderVitrine(p) {
   if (!vitrines.length) return '<div class="empty-tab">Nenhuma vitrine cadastrada ainda.<br>'+
     '<span style="font-size:13px;color:var(--text-soft);margin-top:6px;display:block">'+
     'Uma vitrine é um mostruário de vídeos no Vimeo — cada vídeo dentro dela tem sua própria privacidade.</span></div>';
-  return wrapTable(vitrines.map(linkRow).join(""));
+  return wrapTable(ordenarPorTitulo(vitrines).map(linkRow).join(""));
 }
 
 function renderMarcaDagua(p) {
   if (!p.marcaDagua.length) return '<div class="empty-tab">Nenhuma versão com marca d\'água cadastrada.</div>';
-  return p.marcaDagua.map(function(md){
+  return ordenarPorTitulo(p.marcaDagua).map(function(md){
     var temSenha = !!md.senha;
     return '<div class="link-item">'+
       '<div class="link-info">'+
@@ -876,7 +1001,7 @@ function renderDemandas(p) {
 function renderVideosTipo(p, tipo) {
   var links = p.links.filter(function(l){ return l.tipo===tipo; });
   if (!links.length) return '<div class="empty-tab">Nenhum link cadastrado.</div>';
-  if (tipo==='episodio' && p.categoria==='Série') {
+  if (tipo==='master' && p.categoria==='Série') {
     var byTemp = {}, semTemp = [];
     links.forEach(function(l){
       if (l.temporada) { if (!byTemp[l.temporada]) byTemp[l.temporada]=[]; byTemp[l.temporada].push(l); }
@@ -886,12 +1011,12 @@ function renderVideosTipo(p, tipo) {
     var html = keys.map(function(tNum){
       var tInfo = p.temporadas && p.temporadas.find(function(x){ return x.num===Number(tNum); });
       var tLabel = "Temporada "+tNum+(tInfo&&tInfo.ano?" · "+tInfo.ano:"")+(tInfo&&tInfo.totalEps?" · "+tInfo.totalEps+" episódios":"");
-      return '<div style="margin-bottom:28px"><div class="temp-header">'+tLabel+'</div>'+wrapTable(byTemp[tNum].map(linkRow).join(""))+'</div>';
+      return '<div style="margin-bottom:28px"><div class="temp-header">'+tLabel+'</div>'+wrapTable(ordenarPorTitulo(byTemp[tNum]).map(linkRow).join(""))+'</div>';
     }).join("");
-    if (semTemp.length) html += '<div style="margin-bottom:28px"><div class="temp-header">Gerais</div>'+wrapTable(semTemp.map(linkRow).join(""))+'</div>';
+    if (semTemp.length) html += '<div style="margin-bottom:28px"><div class="temp-header">Gerais</div>'+wrapTable(ordenarPorTitulo(semTemp).map(linkRow).join(""))+'</div>';
     return html;
   }
-  return wrapTable(links.map(linkRow).join(""));
+  return wrapTable(ordenarPorTitulo(links).map(linkRow).join(""));
 }
 
 function renderProjeto(app, id) {
@@ -913,7 +1038,7 @@ function renderProjeto(app, id) {
   }
 
   /* linha de info ao lado do título: ano · nº de episódios · nº de temporadas */
-  var nEpisodios = p.links.filter(function(l){ return l.tipo==='episodio'; }).length;
+  var nEpisodios = p.links.filter(function(l){ return l.tipo==='master' && l.numero; }).length;
   var headerInfoParts = [esc(p.ano || "—")];
   if (nEpisodios) headerInfoParts.push(nEpisodios + (nEpisodios===1?" episódio":" episódios"));
   if (p.categoria==="Série" && p.temporadas && p.temporadas.length > 1) {

@@ -428,6 +428,7 @@ a { color: inherit; text-decoration: none; }
 
 .item-actions { display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s; }
 .link-item:hover .item-actions,
+.link-row:hover .item-actions,
 .demanda-item:hover .item-actions { opacity: 1; }
 @media (hover: none) { .item-actions { opacity: 1; } }
 

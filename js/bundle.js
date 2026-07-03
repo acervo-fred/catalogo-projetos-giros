@@ -867,6 +867,17 @@ function ordenarPorTitulo(arr) {
   });
 }
 
+/* Para séries: respeita a ordem dos episódios (campo "numero") em vez de ordem alfabética. */
+function ordenarLinks(arr, porEpisodio) {
+  if (!porEpisodio) return ordenarPorTitulo(arr);
+  return arr.slice().sort(function(a, b) {
+    if (a.numero != null && b.numero != null) return a.numero - b.numero;
+    if (a.numero != null) return -1;
+    if (b.numero != null) return 1;
+    return (a.titulo || "").localeCompare(b.titulo || "", "pt-BR", { numeric: true, sensitivity: "base" });
+  });
+}
+
 function linkRow(l) {
   var badge = "";
   if (l.temporada) badge = '<span class="ep-badge">T'+l.temporada+(l.numero?' E'+l.numero:'')+'</span>';
@@ -894,12 +905,12 @@ function linkRow(l) {
   '</tr>';
 }
 
-function renderVideosPorTipo(links, projetoNome) {
+function renderVideosPorTipo(links, projetoNome, porEpisodio) {
   var grupos = {};
   links.forEach(function(l){ if(!grupos[l.tipo]) grupos[l.tipo]=[]; grupos[l.tipo].push(l); });
   return Object.keys(TIPO_META).filter(function(t){ return grupos[t]; }).map(function(tipo){
     var meta = TIPO_META[tipo];
-    var linksOrdenados = ordenarPorTitulo(grupos[tipo]);
+    var linksOrdenados = ordenarLinks(grupos[tipo], porEpisodio);
     var grupoTxt = attrShare(buildGroupShareText(tipo, linksOrdenados, projetoNome||""));
     return '<div class="link-grupo">'+
       '<div class="link-grupo-titulo">'+
@@ -933,17 +944,17 @@ function renderVideos(p) {
         (tInfo&&tInfo.totalEps?" · "+tInfo.totalEps+" episódios":"");
       return '<div style="margin-bottom:28px">'+
         '<div class="temp-header">'+tLabel+'</div>'+
-        renderVideosPorTipo(byTemp[tNum], p.nome)+
+        renderVideosPorTipo(byTemp[tNum], p.nome, true)+
       '</div>';
     }).join("");
     if (semTemp.length) html += '<div style="margin-bottom:28px">'+
       '<div class="temp-header">Gerais / Sem temporada</div>'+
-      renderVideosPorTipo(semTemp, p.nome)+'</div>';
+      renderVideosPorTipo(semTemp, p.nome, true)+'</div>';
     return html;
   }
 
   /* Outros: agrupa só por tipo */
-  return renderVideosPorTipo(links, p.nome);
+  return renderVideosPorTipo(links, p.nome, false);
 }
 
 function renderVitrine(p) {
@@ -1011,12 +1022,12 @@ function renderVideosTipo(p, tipo) {
     var html = keys.map(function(tNum){
       var tInfo = p.temporadas && p.temporadas.find(function(x){ return x.num===Number(tNum); });
       var tLabel = "Temporada "+tNum+(tInfo&&tInfo.ano?" · "+tInfo.ano:"")+(tInfo&&tInfo.totalEps?" · "+tInfo.totalEps+" episódios":"");
-      return '<div style="margin-bottom:28px"><div class="temp-header">'+tLabel+'</div>'+wrapTable(ordenarPorTitulo(byTemp[tNum]).map(linkRow).join(""))+'</div>';
+      return '<div style="margin-bottom:28px"><div class="temp-header">'+tLabel+'</div>'+wrapTable(ordenarLinks(byTemp[tNum], true).map(linkRow).join(""))+'</div>';
     }).join("");
-    if (semTemp.length) html += '<div style="margin-bottom:28px"><div class="temp-header">Gerais</div>'+wrapTable(ordenarPorTitulo(semTemp).map(linkRow).join(""))+'</div>';
+    if (semTemp.length) html += '<div style="margin-bottom:28px"><div class="temp-header">Gerais</div>'+wrapTable(ordenarLinks(semTemp, true).map(linkRow).join(""))+'</div>';
     return html;
   }
-  return wrapTable(ordenarPorTitulo(links).map(linkRow).join(""));
+  return wrapTable(ordenarLinks(links, p.categoria==='Série').map(linkRow).join(""));
 }
 
 function renderProjeto(app, id) {

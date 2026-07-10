@@ -2,12 +2,67 @@
 (function () {
 "use strict";
 
-/* Email para notificações de demandas — altere aqui */
-var EMAIL_DEMANDAS = "acervo@girostraffic.page";
-
 /* Token da API do Vimeo — mesma chave usada em vimeo-teste.html, para reaproveitar
    o token já salvo lá sem precisar colar de novo. */
 var VIMEO_TOKEN_KEY = "vimeo_pat_teste";
+
+/* ============================================================
+   EMAILJS — envio automático do "Solicitar versão"
+   ============================================================
+   Funciona 100% do navegador (sem backend), então continua funcionando
+   quando o catálogo for publicado como site estático.
+
+   Template principal (pra equipe), variáveis: {{nome}} {{email}} {{projeto}}
+   {{pedido}} {{data}} {{link}} — "To Email" fixo com os destinatários da equipe,
+   "Reply To" configurado como {{reply_to}} (assim, ao responder o e-mail, a
+   resposta vai direto pra quem fez o pedido).
+
+   Template de confirmação (pra quem pediu, opcional), mesmas variáveis, mas
+   com "To Email" = {{email}} (dinâmico, não fixo) — confirma o recebimento do
+   pedido. Deixe EMAILJS_TEMPLATE_CONFIRMACAO_ID em branco pra não enviar. */
+var EMAILJS_PUBLIC_KEY = "mpmDe-HFOen6i_dqg";
+var EMAILJS_SERVICE_ID = "service_m6pty9b";
+var EMAILJS_TEMPLATE_ID = "template_uji17dg";
+var EMAILJS_TEMPLATE_CONFIRMACAO_ID = "";
+
+if (typeof emailjs !== "undefined" && EMAILJS_PUBLIC_KEY) {
+  emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
+}
+
+async function enviarEmailSolicitacao(dados) {
+  if (typeof emailjs === "undefined") {
+    throw new Error("Serviço de e-mail não carregou (verifique a conexão com a internet).");
+  }
+  if (!EMAILJS_PUBLIC_KEY || !EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID) {
+    throw new Error("Envio de e-mail ainda não configurado (faltam as chaves do EmailJS no código).");
+  }
+  var params = {
+    nome: dados.nome,
+    email: dados.email,
+    reply_to: dados.email,
+    projeto: dados.projeto,
+    pedido: dados.pedido,
+    data: new Date().toLocaleString("pt-BR"),
+    link: dados.link
+  };
+  /* E-mail principal, pra equipe — crítico: se falhar, quem pediu vê o erro e pode tentar de novo. */
+  try {
+    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, params);
+  } catch (e) {
+    var detalhe = (e && (e.text || e.message)) || JSON.stringify(e);
+    console.warn("[EmailJS] erro ao enviar para a equipe:", e);
+    throw new Error("Falha ao enviar o e-mail (" + (e && e.status ? "status " + e.status + ": " : "") + detalhe + ")");
+  }
+  /* Confirmação automática pra quem pediu — best-effort: se falhar, não bloqueia
+     o fluxo, já que o e-mail importante (pra equipe) já saiu. */
+  if (EMAILJS_TEMPLATE_CONFIRMACAO_ID) {
+    try {
+      await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_CONFIRMACAO_ID, params);
+    } catch (e) {
+      console.warn("[EmailJS] falha ao enviar confirmação pro solicitante:", e);
+    }
+  }
+}
 
 /* ============================================================
    STORE
@@ -53,7 +108,7 @@ var store = {
       id: novoId("p"), nome: dados.nome, ano: dados.ano,
       categoria: dados.categoria, poster: dados.poster||"",
       sinopse: dados.sinopse||"", temporadas: dados.temporadas||[],
-      links: [], marcaDagua: [], demandas: []
+      links: [], marcaDagua: []
     };
     db.projetos.push(novo); saveDb(); return novo;
   },
@@ -68,13 +123,25 @@ var store = {
     var p = db.projetos.find(function(x){ return x.id===pid; }); if(!p) return;
     var novo = { id:novoId("l"), tipo:dados.tipo, titulo:dados.titulo,
       url:dados.url, privacidade:dados.privacidade||"", senha:dados.senha||"",
-      numero:dados.numero||null, temporada:dados.temporada||null };
+      numero:dados.numero||null, temporada:dados.temporada||null,
+      duracao:dados.duracao||null, thumbnail:dados.thumbnail||"" };
     p.links.push(novo); saveDb(); return novo;
   },
   updateLink: function(pid, lid, dados) {
     var p = db.projetos.find(function(x){ return x.id===pid; }); if(!p) return;
     var l = p.links.find(function(x){ return x.id===lid; });
     if(l){ Object.assign(l,dados); saveDb(); }
+  },
+  /* Aplica várias atualizações de uma vez (ex.: backfill de duração/thumbnail) e salva
+     só uma vez no final, pra não re-renderizar a tela a cada link durante o loop. */
+  updateLinksBatch: function(pid, updatesById) {
+    var p = db.projetos.find(function(x){ return x.id===pid; }); if(!p) return;
+    var mudou = false;
+    p.links.forEach(function(l){
+      var u = updatesById[l.id];
+      if (u) { Object.assign(l, u); mudou = true; }
+    });
+    if (mudou) saveDb();
   },
   removeLink: function(pid, lid) {
     var p = db.projetos.find(function(x){ return x.id===pid; }); if(!p) return;
@@ -94,21 +161,6 @@ var store = {
   removeMarcaDagua: function(pid, mid) {
     var p = db.projetos.find(function(x){ return x.id===pid; }); if(!p) return;
     p.marcaDagua = p.marcaDagua.filter(function(x){ return x.id!==mid; }); saveDb();
-  },
-  addDemanda: function(pid, dados) {
-    var p = db.projetos.find(function(x){ return x.id===pid; }); if(!p) return;
-    var novo = { id:novoId("d"), descricao:dados.descricao, responsavel:dados.responsavel||"",
-      status:dados.status||"Pendente", data:new Date().toISOString().slice(0,10) };
-    p.demandas.push(novo); saveDb(); return novo;
-  },
-  updateDemanda: function(pid, did, dados) {
-    var p = db.projetos.find(function(x){ return x.id===pid; }); if(!p) return;
-    var d = p.demandas.find(function(x){ return x.id===did; });
-    if(d){ Object.assign(d,dados); saveDb(); }
-  },
-  removeDemanda: function(pid, did) {
-    var p = db.projetos.find(function(x){ return x.id===pid; }); if(!p) return;
-    p.demandas = p.demandas.filter(function(x){ return x.id!==did; }); saveDb();
   }
 };
 
@@ -141,7 +193,7 @@ async function compressImage(file) {
   });
 }
 
-async function fetchVimeoTitle(url) {
+async function fetchVimeoOembed(url) {
   try {
     var ctrl = new AbortController();
     var t = setTimeout(function(){ ctrl.abort(); }, 4000);
@@ -151,8 +203,12 @@ async function fetchVimeoTitle(url) {
     console.log("[Vimeo oEmbed] status:", res.status, "url:", url);
     if (!res.ok) return null;
     var data = await res.json();
-    console.log("[Vimeo oEmbed] título:", data.title);
-    return data.title || null;
+    console.log("[Vimeo oEmbed] título:", data.title, "| duração:", data.duration, "| thumb:", data.thumbnail_url);
+    return {
+      titulo: data.title || null,
+      duracao: data.duration || null,
+      thumbnail: data.thumbnail_url || null
+    };
   } catch(e) {
     console.warn("[Vimeo oEmbed] erro:", e);
     return null;
@@ -175,8 +231,21 @@ function extrairVimeoId(url) {
   return m ? m[1] : null;
 }
 
-/* Busca título + privacidade via API autenticada (funciona mesmo pra vídeo privado/com senha).
-   Retorna null se não houver token salvo, o id não puder ser extraído, ou a chamada falhar. */
+/* Escolhe, entre os tamanhos de thumbnail que o Vimeo devolve, o mais próximo de 320px
+   de largura — suficiente pra miniatura da tabela sem guardar imagem gigante. */
+function pickThumbLink(pictures) {
+  var sizes = pictures && pictures.sizes;
+  if (!sizes || !sizes.length) return null;
+  var alvo = 320, melhor = sizes[0];
+  sizes.forEach(function(s) {
+    if (Math.abs(s.width - alvo) < Math.abs(melhor.width - alvo)) melhor = s;
+  });
+  return melhor.link || null;
+}
+
+/* Busca título + privacidade + duração + thumbnail via API autenticada (funciona mesmo pra
+   vídeo privado/com senha). Retorna null se não houver token salvo, o id não puder ser
+   extraído, ou a chamada falhar. */
 async function fetchVimeoDadosApi(url) {
   var token = localStorage.getItem(VIMEO_TOKEN_KEY);
   var id = extrairVimeoId(url);
@@ -186,7 +255,7 @@ async function fetchVimeoDadosApi(url) {
   try {
     var ctrl = new AbortController();
     var t = setTimeout(function(){ ctrl.abort(); }, 5000);
-    var res = await fetch("https://api.vimeo.com/videos/" + id + "?fields=name,privacy.view", {
+    var res = await fetch("https://api.vimeo.com/videos/" + id + "?fields=name,privacy.view,duration,pictures.sizes", {
       signal: ctrl.signal,
       headers: {
         "Authorization": "Bearer " + token,
@@ -204,7 +273,9 @@ async function fetchVimeoDadosApi(url) {
     console.log("[Vimeo API] dados recebidos:", data);
     return {
       titulo: data.name || null,
-      privacidade: VIMEO_PRIV_MAP[data.privacy && data.privacy.view] || null
+      privacidade: VIMEO_PRIV_MAP[data.privacy && data.privacy.view] || null,
+      duracao: data.duration || null,
+      thumbnail: pickThumbLink(data.pictures)
     };
   } catch(e) {
     console.warn("[Vimeo API] erro:", e);
@@ -402,8 +473,6 @@ function privBadge(priv) {
   var m = PRIV_META[priv]; if (!m) return "";
   return '<span class="priv-badge badge-'+m.cor+'">'+m.label+'</span>';
 }
-var STATUS_DEMANDA = ["Pendente","Em andamento","Concluída","Cancelada"];
-
 /* ---- Projeto ---- */
 function abrirNovoProjeto(existente) {
   var ed = !!existente, p = existente||{}, posterBase64 = p.poster||"";
@@ -535,6 +604,7 @@ function abrirNovoProjeto(existente) {
 /* ---- Link Vimeo ---- */
 function abrirNovoLink(projetoId, existente, tipoForcado) {
   var ed = !!existente, l = existente||{};
+  var duracaoFetched = null, thumbnailFetched = null;
   var proj = store.getProjeto(projetoId);
   var isSerie = proj && proj.categoria==="Série";
   var temporadas = (proj && proj.temporadas) || [];
@@ -575,12 +645,11 @@ function abrirNovoLink(projetoId, existente, tipoForcado) {
       privSelect.addEventListener("change", toggleSenha);
       toggleSenha();
 
-      if (ed) return;
       var urlInput = form.querySelector("#f_url");
       var tituloInput = form.querySelector("#f_titulo");
       var hint = form.querySelector("#vimeo-hint");
       var temToken = !!localStorage.getItem(VIMEO_TOKEN_KEY);
-      if (!temToken) {
+      if (!temToken && !ed) {
         hint.textContent = "💡 Sem token da API do Vimeo configurado — só dá pra buscar o título (vídeos públicos). Configure em vimeo-teste.html pra também preencher a privacidade.";
         hint.style.display = "block";
       }
@@ -594,15 +663,18 @@ function abrirNovoLink(projetoId, existente, tipoForcado) {
         if (viaApi) {
           if (viaApi.titulo && !tituloInput.value.trim()) tituloInput.value = viaApi.titulo;
           if (viaApi.privacidade) { privSelect.value = viaApi.privacidade; toggleSenha(); }
-          hint.textContent = "Título e privacidade preenchidos via API do Vimeo.";
+          if (viaApi.duracao) duracaoFetched = viaApi.duracao;
+          if (viaApi.thumbnail) thumbnailFetched = viaApi.thumbnail;
+          hint.textContent = "Dados preenchidos via API do Vimeo (título, privacidade, duração, thumbnail).";
           setTimeout(function(){ hint.style.display = "none"; }, 2500);
           return;
         }
 
-        if (tituloInput.value.trim()) { hint.style.display = "none"; return; }
-        var title = await fetchVimeoTitle(url);
-        if (title) {
-          tituloInput.value = title;
+        var viaOembed = await fetchVimeoOembed(url);
+        if (viaOembed) {
+          if (viaOembed.titulo && !tituloInput.value.trim()) tituloInput.value = viaOembed.titulo;
+          if (viaOembed.duracao) duracaoFetched = viaOembed.duracao;
+          if (viaOembed.thumbnail) thumbnailFetched = viaOembed.thumbnail;
           hint.style.display = "none";
         } else {
           hint.textContent = "Não foi possível buscar os dados automaticamente. Preencha manualmente.";
@@ -631,6 +703,8 @@ function abrirNovoLink(projetoId, existente, tipoForcado) {
         numero: Number(readVal(form,"numero"))||null,
         temporada: (isSerie && tempOpts.length) ? Number(readVal(form,"temporada"))||null : null
       };
+      if (duracaoFetched) dados.duracao = duracaoFetched;
+      if (thumbnailFetched) dados.thumbnail = thumbnailFetched;
       if (ed) store.updateLink(projetoId, l.id, dados);
       else store.addLink(projetoId, dados);
     }
@@ -678,44 +752,35 @@ function abrirNovaMarcaDagua(projetoId, existente) {
   });
 }
 
-/* ---- Demanda ---- */
-function abrirNovaDemanda(projetoId, existente) {
-  var ed = !!existente, d = existente||{};
+/* ---- Solicitar versão (formulário público: nome, e-mail, projeto, pedido) ----
+   Dispara e-mail pra equipe (com Reply-To = e-mail de quem pediu) e, se configurado,
+   um e-mail de confirmação automático pra quem pediu. Não fica nada salvo no
+   catálogo — é só um disparo de e-mail. */
+function abrirSolicitarVersao(projetoId) {
+  var proj = store.getProjeto(projetoId);
+  var projNome = proj ? proj.nome : "";
+
   openModal({
-    title: ed?"Editar demanda":"Nova demanda",
-    submitLabel: ed?"Salvar":"Criar demanda",
+    title: "Solicitar versão",
+    subtitle: "Preencha seus dados e detalhe o pedido (marca d'água, formato, prazo, finalidade…). A equipe recebe um e-mail automático, e você recebe a confirmação.",
+    submitLabel: "Enviar pedido",
     bodyHtml:
-      fTextarea("descricao","Descrição da demanda",{required:true,value:d.descricao||"",
-        placeholder:"Descreva detalhadamente o que é necessário…"})+
+      '<div class="field"><label>Projeto</label><div class="solic-projeto-fixo">'+esc(projNome)+'</div></div>'+
       '<div class="field-2col">'+
-        fText("responsavel","Quem está pedindo",{required:true,value:d.responsavel||"",placeholder:"Nome / empresa"})+
-        fSelect("status","Status",STATUS_DEMANDA,{value:d.status||"Pendente"})+
+        fText("nome","Nome",{required:true,placeholder:"Seu nome completo"})+
+        fText("email","Seu e-mail",{type:"email",required:true,placeholder:"para receber a confirmação"})+
       '</div>'+
-      (!ed ? '<div class="field-hint" style="color:var(--accent)">Após salvar, você poderá enviar um e-mail de notificação.</div>' : ""),
+      fTextarea("pedido","Detalhe o pedido",{required:true,
+        placeholder:"Ex.: master sem marca d'água, versão com marca d'água de tal canal, formato específico, prazo, finalidade…"}),
     onSubmit: async function(form) {
-      var descricao = readVal(form,"descricao");
-      var responsavel = readVal(form,"responsavel");
-      if (!descricao) throw new Error("Descreva a demanda.");
-      if (!responsavel) throw new Error("Informe quem está pedindo.");
-      var dados = { descricao:descricao, responsavel:responsavel, status:readVal(form,"status") };
-      if (ed) {
-        store.updateDemanda(projetoId, d.id, dados);
-      } else {
-        store.addDemanda(projetoId, dados);
-        /* Abre cliente de e-mail com a demanda pré-preenchida */
-        var proj = store.getProjeto(projetoId);
-        var projNome = proj ? proj.nome : "";
-        var subject = "Nova demanda — " + projNome;
-        var body =
-          "Nova demanda cadastrada no Giros Catálogo\n\n" +
-          "Projeto: " + projNome + "\n" +
-          "Solicitante: " + responsavel + "\n\n" +
-          "Descrição:\n" + descricao + "\n\n" +
-          "Status: " + readVal(form,"status");
-        window.location.href = "mailto:" + EMAIL_DEMANDAS +
-          "?subject=" + encodeURIComponent(subject) +
-          "&body=" + encodeURIComponent(body);
-      }
+      var nome = readVal(form,"nome");
+      var email = readVal(form,"email");
+      var pedido = readVal(form,"pedido");
+      if (!nome) throw new Error("Informe seu nome.");
+      if (!email) throw new Error("Informe seu e-mail.");
+      if (!pedido) throw new Error("Detalhe o pedido.");
+      await enviarEmailSolicitacao({ nome:nome, email:email, projeto:projNome, pedido:pedido, link:location.href });
+      showCopyToast("Pedido enviado com sucesso!");
     }
   });
 }
@@ -796,8 +861,6 @@ var TIPO_META = {
   vitrine:  {label:"Vitrine Vimeo", icon:"🗂",ordem:4},
   outro:    {label:"Outros",        icon:"🔗",ordem:5}
 };
-var STATUS_COR = { "Pendente":"amber","Em andamento":"blue","Concluída":"green","Cancelada":"gray" };
-
 var _toastTimer;
 function showCopyToast(msg) {
   var t = document.getElementById("copy-toast");
@@ -878,11 +941,27 @@ function ordenarLinks(arr, porEpisodio) {
   });
 }
 
+/* Segundos -> "12:34" (ou "1:02:34" acima de 1h) */
+function formatDuracao(seg) {
+  seg = Number(seg) || 0;
+  if (!seg) return "";
+  var h = Math.floor(seg / 3600), m = Math.floor((seg % 3600) / 60), s = seg % 60;
+  var mm = String(m).padStart(h ? 2 : 1, "0"), ss = String(s).padStart(2, "0");
+  return h ? (h + ":" + String(m).padStart(2,"0") + ":" + ss) : (mm + ":" + ss);
+}
+
 function linkRow(l) {
   var badge = "";
   if (l.temporada) badge = '<span class="ep-badge">T'+l.temporada+(l.numero?' E'+l.numero:'')+'</span>';
   else if (l.numero) badge = '<span class="ep-badge">Ep.'+l.numero+'</span>';
+  var dur = formatDuracao(l.duracao);
   return '<tr class="link-row">'+
+    '<td class="col-thumb">'+
+      '<div class="thumb-wrap'+(l.thumbnail?"":" thumb-empty")+'">'+
+        (l.thumbnail ? '<img class="thumb-img" src="'+esc(l.thumbnail)+'" alt="" loading="lazy">' : "")+
+        (dur ? '<span class="thumb-duration">'+dur+'</span>' : "")+
+      '</div>'+
+    '</td>'+
     '<td class="col-code">'+badge+'</td>'+
     '<td class="col-nome">'+esc(l.titulo)+'</td>'+
     '<td class="col-link"><div class="link-priv-inline">'+
@@ -991,24 +1070,6 @@ function renderMarcaDagua(p) {
   }).join("");
 }
 
-function renderDemandas(p) {
-  if (!p.demandas.length) return '<div class="empty-tab">Nenhuma demanda registrada.</div>';
-  return p.demandas.map(function(d){
-    var cor = STATUS_COR[d.status]||"gray";
-    return '<div class="demanda-item">'+
-      '<div class="demanda-main">'+
-        '<div class="demanda-desc">'+esc(d.descricao)+'</div>'+
-        (d.responsavel?'<div class="demanda-resp">Pedido por: '+esc(d.responsavel)+'</div>':"")+
-      '</div>'+
-      '<span class="status-badge badge-'+cor+'">'+esc(d.status)+'</span>'+
-      '<div class="item-actions">'+
-        '<button class="icon-btn" data-action="edit" data-demanda-id="'+esc(d.id)+'" title="Editar">✎</button>'+
-        '<button class="icon-btn danger" data-action="del" data-demanda-id="'+esc(d.id)+'" title="Excluir">🗑</button>'+
-      '</div>'+
-    '</div>';
-  }).join("");
-}
-
 function renderVideosTipo(p, tipo) {
   var links = p.links.filter(function(l){ return l.tipo===tipo; });
   if (!links.length) return '<div class="empty-tab">Nenhum link cadastrado.</div>';
@@ -1112,6 +1173,7 @@ function renderProjeto(app, id) {
         '<div class="proj-aside-actions">'+
           '<button class="btn btn-primary" id="btn-add-link-aside">+ Adicionar link</button>'+
           '<button class="btn" id="btn-editar">Editar projeto</button>'+
+          '<button class="btn btn-ghost" id="btn-atualizar-vimeo" title="Busca no Vimeo a duração e a miniatura dos links que ainda não têm">Atualizar miniaturas</button>'+
           '<button class="btn btn-ghost danger-btn" id="btn-excluir">Excluir</button>'+
         '</div>'+
       '</div>'+
@@ -1121,7 +1183,7 @@ function renderProjeto(app, id) {
         (p.sinopse?'<p class="proj-sinopse">'+esc(p.sinopse)+'</p>':"")+
         '<div class="proj-tabs-row">'+
           '<div class="tabs">'+tabsHtml+'</div>'+
-          '<button class="btn btn-ghost btn-solicitar" id="btn-solicitar" disabled title="Em breve">Solicitar versão</button>'+
+          '<button class="btn btn-ghost btn-solicitar" id="btn-solicitar">Solicitar versão</button>'+
         '</div>'+
         panelsHtml+
       '</div>'+
@@ -1145,6 +1207,34 @@ function renderProjeto(app, id) {
   document.getElementById("btn-add-link").addEventListener("click", function(){ abrirNovoLink(p.id); });
   document.getElementById("btn-add-link-aside").addEventListener("click", function(){ abrirNovoLink(p.id); });
   document.getElementById("btn-add-md").addEventListener("click", function(){ abrirNovaMarcaDagua(p.id); });
+  document.getElementById("btn-solicitar").addEventListener("click", function(){ abrirSolicitarVersao(p.id); });
+
+  document.getElementById("btn-atualizar-vimeo").addEventListener("click", async function(){
+    var alvo = p.links.filter(function(l){ return !l.duracao || !l.thumbnail; });
+    if (!alvo.length) { showCopyToast("Todos os links já têm duração e miniatura."); return; }
+    var btn = this;
+    var original = btn.textContent;
+    btn.disabled = true;
+    var atualizados = {}, ok = 0;
+    for (var i = 0; i < alvo.length; i++) {
+      var l = alvo[i];
+      btn.textContent = "Atualizando " + (i+1) + "/" + alvo.length + "…";
+      var dados = await fetchVimeoDadosApi(l.url);
+      if (!dados) dados = await fetchVimeoOembed(l.url);
+      if (dados && (dados.duracao || dados.thumbnail)) {
+        var upd = {};
+        if (dados.duracao) upd.duracao = dados.duracao;
+        if (dados.thumbnail) upd.thumbnail = dados.thumbnail;
+        atualizados[l.id] = upd;
+        ok++;
+      }
+      if (i < alvo.length - 1) await new Promise(function(r){ setTimeout(r, 300); });
+    }
+    btn.disabled = false;
+    btn.textContent = original;
+    store.updateLinksBatch(p.id, atualizados);
+    showCopyToast(ok + " de " + alvo.length + " link" + (alvo.length===1?"":"s") + " atualizado" + (ok===1?"":"s"));
+  });
 
   function handleShare(e) {
     var btn = e.target.closest("[data-action='share']");

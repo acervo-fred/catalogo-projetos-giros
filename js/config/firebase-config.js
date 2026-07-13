@@ -12,7 +12,7 @@
 //  true  → Firestore (giros-imagens) além do localStorage: toda
 //          escrita local também é enviada pro Firestore em segundo
 //          plano, e ao carregar a página os dados vêm do Firestore.
-export const USE_FIRESTORE = false;
+export const USE_FIRESTORE = true;
 
 export const firebaseConfig = {
   apiKey: "AIzaSyC-0iuPs5xhvjjh2LmzoGjAKtAh6aY2-ZQ",

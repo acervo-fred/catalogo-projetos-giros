@@ -19,5 +19,14 @@ window.addEventListener("hashchange", route);
 store.onChange(route);
 
 document.getElementById("btn-novo-projeto").addEventListener("click", abrirNovoProjeto);
+document.getElementById("btn-sync").addEventListener("click", async () => {
+  if (!confirm("Enviar todos os projetos salvos neste navegador para o Firestore?")) return;
+  try {
+    await store.migrarParaFirestore();
+    alert("Concluído.");
+  } catch (e) {
+    alert("Erro: " + e.message);
+  }
+});
 
 route();

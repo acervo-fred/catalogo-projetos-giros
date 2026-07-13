@@ -95,6 +95,51 @@ function saveDb() {
   if (mudou) saveDb();
 })();
 
+/* ---------- Firestore (opcional — ver js/config/firebase-config.js) ----------
+   Local-first: a UI continua 100% síncrona em cima do localStorage (acima).
+   Quando USE_FIRESTORE=true, cada escrita também é replicada pro Firestore
+   em segundo plano (fire-and-forget), e ao carregar a página os projetos
+   vêm do Firestore (hidratação), substituindo o cache local. */
+var _firestoreCfg = null;
+var _firestoreMod = null;
+async function firestoreMod() {
+  if (!_firestoreCfg) _firestoreCfg = await import("./config/firebase-config.js");
+  if (!_firestoreCfg.USE_FIRESTORE) return null;
+  if (_firestoreMod) return _firestoreMod;
+  var appMod = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
+  var fsMod = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
+  var app = appMod.initializeApp(_firestoreCfg.firebaseConfig);
+  _firestoreMod = {
+    fdb: fsMod.getFirestore(app), doc: fsMod.doc, setDoc: fsMod.setDoc,
+    deleteDoc: fsMod.deleteDoc, collection: fsMod.collection, getDocsFromServer: fsMod.getDocsFromServer,
+  };
+  return _firestoreMod;
+}
+async function pushProjetoRemoto(p) {
+  var mod = await firestoreMod();
+  if (!mod) return;
+  var campos = Object.assign({}, p);
+  delete campos.id;
+  await mod.setDoc(mod.doc(mod.fdb, _firestoreCfg.COLLECTIONS.projetos, p.id), campos);
+}
+async function deleteProjetoRemoto(id) {
+  var mod = await firestoreMod();
+  if (!mod) return;
+  await mod.deleteDoc(mod.doc(mod.fdb, _firestoreCfg.COLLECTIONS.projetos, id));
+}
+async function hidratarDoFirestore() {
+  var mod = await firestoreMod();
+  if (!mod) return;
+  var snap = await mod.getDocsFromServer(mod.collection(mod.fdb, _firestoreCfg.COLLECTIONS.projetos));
+  if (snap.empty) return; // nada no Firestore ainda — não apaga dados locais
+  db.projetos = snap.docs.map(function(d) { return Object.assign({ id: d.id }, d.data()); });
+  saveDb();
+}
+function sincronizar(p) {
+  pushProjetoRemoto(p).catch(function(e) { console.warn("Firestore: falha ao salvar projeto.", e); });
+}
+hidratarDoFirestore();
+
 var store = {
   onChange: function(fn) { _listeners.push(fn); },
   listProjetos: function() {
@@ -110,14 +155,15 @@ var store = {
       sinopse: dados.sinopse||"", temporadas: dados.temporadas||[],
       links: [], marcaDagua: []
     };
-    db.projetos.push(novo); saveDb(); return novo;
+    db.projetos.push(novo); saveDb(); sincronizar(novo); return novo;
   },
   updateProjeto: function(id, campos) {
     var p = db.projetos.find(function(x){ return x.id===id; });
-    if (!p) return; Object.assign(p, campos); saveDb();
+    if (!p) return; Object.assign(p, campos); saveDb(); sincronizar(p);
   },
   removeProjeto: function(id) {
     db.projetos = db.projetos.filter(function(p){ return p.id!==id; }); saveDb();
+    deleteProjetoRemoto(id).catch(function(e) { console.warn("Firestore: falha ao excluir projeto.", e); });
   },
   addLink: function(pid, dados) {
     var p = db.projetos.find(function(x){ return x.id===pid; }); if(!p) return;
@@ -125,12 +171,12 @@ var store = {
       url:dados.url, privacidade:dados.privacidade||"", senha:dados.senha||"",
       numero:dados.numero||null, temporada:dados.temporada||null,
       duracao:dados.duracao||null, thumbnail:dados.thumbnail||"" };
-    p.links.push(novo); saveDb(); return novo;
+    p.links.push(novo); saveDb(); sincronizar(p); return novo;
   },
   updateLink: function(pid, lid, dados) {
     var p = db.projetos.find(function(x){ return x.id===pid; }); if(!p) return;
     var l = p.links.find(function(x){ return x.id===lid; });
-    if(l){ Object.assign(l,dados); saveDb(); }
+    if(l){ Object.assign(l,dados); saveDb(); sincronizar(p); }
   },
   /* Aplica várias atualizações de uma vez (ex.: backfill de duração/thumbnail) e salva
      só uma vez no final, pra não re-renderizar a tela a cada link durante o loop. */
@@ -141,26 +187,33 @@ var store = {
       var u = updatesById[l.id];
       if (u) { Object.assign(l, u); mudou = true; }
     });
-    if (mudou) saveDb();
+    if (mudou) { saveDb(); sincronizar(p); }
   },
   removeLink: function(pid, lid) {
     var p = db.projetos.find(function(x){ return x.id===pid; }); if(!p) return;
-    p.links = p.links.filter(function(l){ return l.id!==lid; }); saveDb();
+    p.links = p.links.filter(function(l){ return l.id!==lid; }); saveDb(); sincronizar(p);
   },
   addMarcaDagua: function(pid, dados) {
     var p = db.projetos.find(function(x){ return x.id===pid; }); if(!p) return;
     var novo = { id:novoId("md"), titulo:dados.titulo, url:dados.url,
       senha:dados.senha||"", observacoes:dados.observacoes||"" };
-    p.marcaDagua.push(novo); saveDb(); return novo;
+    p.marcaDagua.push(novo); saveDb(); sincronizar(p); return novo;
   },
   updateMarcaDagua: function(pid, mid, dados) {
     var p = db.projetos.find(function(x){ return x.id===pid; }); if(!p) return;
     var md = p.marcaDagua.find(function(x){ return x.id===mid; });
-    if(md){ Object.assign(md,dados); saveDb(); }
+    if(md){ Object.assign(md,dados); saveDb(); sincronizar(p); }
   },
   removeMarcaDagua: function(pid, mid) {
     var p = db.projetos.find(function(x){ return x.id===pid; }); if(!p) return;
-    p.marcaDagua = p.marcaDagua.filter(function(x){ return x.id!==mid; }); saveDb();
+    p.marcaDagua = p.marcaDagua.filter(function(x){ return x.id!==mid; }); saveDb(); sincronizar(p);
+  },
+  /* migração manual: envia TODOS os projetos locais pro Firestore de uma vez
+     (usar uma vez, ao ligar USE_FIRESTORE pela primeira vez) */
+  migrarParaFirestore: async function() {
+    if (!_firestoreCfg) _firestoreCfg = await import("./config/firebase-config.js");
+    if (!_firestoreCfg.USE_FIRESTORE) throw new Error("USE_FIRESTORE está desligado.");
+    for (const p of db.projetos) await pushProjetoRemoto(p);
   }
 };
 
@@ -1298,6 +1351,15 @@ function route() {
 window.addEventListener("hashchange", route);
 store.onChange(route);
 document.getElementById("btn-novo-projeto").addEventListener("click", function(){ abrirNovoProjeto(); });
+document.getElementById("btn-sync").addEventListener("click", async function() {
+  if (!confirm("Enviar todos os projetos salvos neste navegador para o Firestore?")) return;
+  try {
+    await store.migrarParaFirestore();
+    alert("Concluído.");
+  } catch (e) {
+    alert("Erro: " + e.message);
+  }
+});
 route();
 
 })();

@@ -1351,15 +1351,54 @@ function route() {
 window.addEventListener("hashchange", route);
 store.onChange(route);
 document.getElementById("btn-novo-projeto").addEventListener("click", function(){ abrirNovoProjeto(); });
-document.getElementById("btn-sync").addEventListener("click", async function() {
-  if (!confirm("Enviar todos os projetos salvos neste navegador para o Firestore?")) return;
-  try {
-    await store.migrarParaFirestore();
-    alert("Concluído.");
-  } catch (e) {
-    alert("Erro: " + e.message);
-  }
-});
+document.getElementById("btn-backup").addEventListener("click", function(){ abrirBackup(); });
 route();
+
+function abrirBackup() {
+  openModal({
+    title: "Backup e dados",
+    subtitle: "Exportar ou importar os projetos cadastrados",
+    submitLabel: "Fechar",
+    onSubmit: async function() {},
+    bodyHtml:
+      '<p style="margin-top:0;font-size:13.5px;color:var(--text-soft)">Baixa um arquivo JSON com todos os projetos cadastrados. Faça isso periodicamente.</p>' +
+      '<button type="button" class="btn btn-primary" id="btn-export-json">⬇ Exportar JSON</button>' +
+      '<hr style="margin:18px 0;border:none;border-top:1px solid var(--border)">' +
+      '<p style="margin-top:0;font-size:13.5px;color:var(--text-soft)">Restaura a partir de um JSON exportado. Substitui os projetos atuais pelos do arquivo.</p>' +
+      '<input type="file" id="file-import-json" accept="application/json" style="display:none">' +
+      '<button type="button" class="btn" id="btn-import-json">⬆ Escolher arquivo…</button>' +
+      '<div id="import-json-status" style="font-size:13px;margin-top:8px;color:var(--text-soft)"></div>',
+    onMount: function(form) {
+      form.querySelector("#btn-export-json").addEventListener("click", function() {
+        var json = store.exportAll();
+        var blob = new Blob([json], { type: "application/json" });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        var carimbo = new Date().toISOString().slice(0, 10);
+        a.href = url; a.download = "catalogo-projetos-giros-backup-" + carimbo + ".json";
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+      });
+      var fileInput = form.querySelector("#file-import-json");
+      var status = form.querySelector("#import-json-status");
+      form.querySelector("#btn-import-json").addEventListener("click", function() { fileInput.click(); });
+      fileInput.addEventListener("change", async function() {
+        var file = fileInput.files[0];
+        if (!file) return;
+        if (!confirm("Importar este backup? Os projetos atuais serão substituídos.")) { fileInput.value = ""; return; }
+        status.textContent = "Importando…";
+        try {
+          var text = await file.text();
+          store.importAll(text);
+          status.textContent = "✓ Importado. Recarregando…";
+          setTimeout(function(){ location.reload(); }, 600);
+        } catch (e) {
+          status.textContent = "✗ Erro: " + e.message;
+        }
+        fileInput.value = "";
+      });
+    }
+  });
+}
 
 })();

@@ -1,4 +1,4 @@
-/* Giros Catálogo — bundle único, sem ES modules */
+/* Catálogo Projetos Giros — bundle único, sem ES modules */
 (function () {
 "use strict";
 

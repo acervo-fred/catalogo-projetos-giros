@@ -500,7 +500,7 @@ function readVal(form, name) {
 /* ============================================================
    CADASTROS
    ============================================================ */
-var CATEGORIAS = ["Documentário","Filme","Série","Curta","Institucional","Outro"];
+var CATEGORIAS = ["Filme","Série","Curta","Institucional","Outro"];
 var TIPOS_LINK = [
   {value:"master",label:"Master"},
   {value:"trailer",label:"Trailer"},{value:"teaser",label:"Teaser"},
@@ -841,7 +841,7 @@ function abrirSolicitarVersao(projetoId) {
 /* ============================================================
    VIEW: HOME
    ============================================================ */
-var CATS_HOME = ["Todos","Documentário","Filme","Série","Curta","Institucional","Outro"];
+var CATS_HOME = ["Todos","Filme","Série","Curta","Institucional","Outro"];
 
 function renderHome(app) {
   app.innerHTML =

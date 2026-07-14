@@ -2,7 +2,7 @@ import { store } from "../data/store.js";
 import { esc } from "../ui/dom.js";
 import { openModal, fText, fTextarea, fSelect, readVal } from "../ui/modal.js";
 
-const CATEGORIAS = ["Documentário", "Filme", "Série", "Curta", "Institucional", "Outro"];
+const CATEGORIAS = ["Filme", "Série", "Curta", "Institucional", "Outro"];
 const TIPOS_LINK = [
   { value: "master",   label: "Master" },
   { value: "episodio", label: "Episódio" },

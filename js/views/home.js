@@ -1,7 +1,7 @@
 import { store } from "../data/store.js";
 import { esc } from "../ui/dom.js";
 
-const CATEGORIAS = ["Todos", "Documentário", "Filme", "Série", "Curta", "Institucional", "Outro"];
+const CATEGORIAS = ["Todos", "Filme", "Série", "Curta", "Institucional", "Outro"];
 
 export function renderHome(app) {
   app.innerHTML = `

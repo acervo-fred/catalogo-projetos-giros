@@ -815,7 +815,7 @@ function abrirSolicitarVersao(projetoId) {
 
   openModal({
     title: "Solicitar versão",
-    subtitle: "Preencha seus dados e detalhe o pedido (marca d'água, formato, prazo, finalidade…). A equipe recebe um e-mail automático, e você recebe a confirmação.",
+    subtitle: "Preencha seus dados e detalhe o seu pedido (link expirável, versão com marca d'água, prazo, finalidade…). A equipe receberá um e-mail automático e você receberá uma confirmação.",
     submitLabel: "Enviar pedido",
     bodyHtml:
       '<div class="field"><label>Projeto</label><div class="solic-projeto-fixo">'+esc(projNome)+'</div></div>'+
@@ -824,7 +824,7 @@ function abrirSolicitarVersao(projetoId) {
         fText("email","Seu e-mail",{type:"email",required:true,placeholder:"para receber a confirmação"})+
       '</div>'+
       fTextarea("pedido","Detalhe o pedido",{required:true,
-        placeholder:"Ex.: master sem marca d'água, versão com marca d'água de tal canal, formato específico, prazo, finalidade…"}),
+        placeholder:"Ex.: link expirável, master com marca d'água de tal canal, formato específico, prazo, finalidade…"}),
     onSubmit: async function(form) {
       var nome = readVal(form,"nome");
       var email = readVal(form,"email");

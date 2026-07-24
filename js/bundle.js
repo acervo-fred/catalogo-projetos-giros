@@ -140,6 +140,75 @@ function sincronizar(p) {
 }
 hidratarDoFirestore();
 
+/* ---------- Login (Google) ----------
+   A leitura do catálogo sempre foi (e continua) livre pra qualquer
+   um com o link. Isso aqui trava só a ESCRITA: sem estar logado com
+   uma das contas abaixo, a interface nem deixa abrir os formulários
+   de editar/excluir — e mesmo que abrisse, a regra do Firestore
+   (firestore.rules, no repo do Acervo) rejeitaria a gravação remota.
+   Lista tem que bater com a de lá. */
+var EMAILS_AUTORIZADOS = [
+  "acervo@girostraffic.page",
+  "gabrielscmiranda@gmail.com",
+  "datamanager@girostraffic.page",
+  "assistente.extra@girostraffic.page",
+  "assistente@giros.com.br",
+  "producao.finalizacao@giros.com.br"
+];
+var _usuarioAtual = null;
+var _authMod = null;
+async function authMod() {
+  if (_authMod) return _authMod;
+  var appMod = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
+  var authSdk = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
+  if (!_firestoreCfg) _firestoreCfg = await import("./config/firebase-config.js");
+  var app = appMod.getApps().length ? appMod.getApps()[0] : appMod.initializeApp(_firestoreCfg.firebaseConfig);
+  var auth = authSdk.getAuth(app);
+  _authMod = {
+    auth: auth, GoogleAuthProvider: authSdk.GoogleAuthProvider,
+    signInWithPopup: authSdk.signInWithPopup, signOut: authSdk.signOut
+  };
+  authSdk.onAuthStateChanged(auth, function (u) { _usuarioAtual = u; renderAuthBox(); });
+  return _authMod;
+}
+authMod().catch(function (e) { console.warn("[Auth] falha ao iniciar:", e); });
+
+function usuarioAutorizado() {
+  return !!(_usuarioAtual && EMAILS_AUTORIZADOS.indexOf(_usuarioAtual.email) !== -1);
+}
+/* usar no início de qualquer ação que edite/exclua algo — devolve
+   false (e avisa) se não tiver login autorizado, sem nem abrir o modal */
+function exigirLogin() {
+  if (usuarioAutorizado()) return true;
+  showCopyToast(_usuarioAtual ? "Essa conta não tem permissão para editar." : "Faça login (canto superior) para editar.");
+  return false;
+}
+async function loginGoogle() {
+  var mod = await authMod();
+  await mod.signInWithPopup(mod.auth, new mod.GoogleAuthProvider());
+}
+async function logoutGoogle() {
+  var mod = await authMod();
+  await mod.signOut(mod.auth);
+}
+function renderAuthBox() {
+  var box = document.getElementById("auth-box");
+  if (!box) return;
+  if (_usuarioAtual) {
+    box.innerHTML = '<button class="btn btn-ghost btn-sm" id="btn-logout" title="Sair">' + esc(_usuarioAtual.email) + '</button>';
+    box.querySelector("#btn-logout").addEventListener("click", function () {
+      if (!confirm("Sair da conta?")) return;
+      logoutGoogle();
+    });
+  } else {
+    box.innerHTML = '<button class="btn btn-ghost btn-sm" id="btn-login">Entrar com Google</button>';
+    box.querySelector("#btn-login").addEventListener("click", function () {
+      loginGoogle().catch(function (e) { console.error(e); showCopyToast("Não foi possível entrar."); });
+    });
+  }
+}
+renderAuthBox();
+
 var store = {
   onChange: function(fn) { _listeners.push(fn); },
   listProjetos: function() {
@@ -1252,17 +1321,19 @@ function renderProjeto(app, id) {
     });
   });
 
-  document.getElementById("btn-editar").addEventListener("click", function(){ abrirNovoProjeto(p); });
+  document.getElementById("btn-editar").addEventListener("click", function(){ if (!exigirLogin()) return; abrirNovoProjeto(p); });
   document.getElementById("btn-excluir").addEventListener("click", function(){
+    if (!exigirLogin()) return;
     if (!confirm('Excluir "'+p.nome+'" e todos os seus dados?')) return;
     store.removeProjeto(p.id); location.hash = "#/";
   });
-  document.getElementById("btn-add-link").addEventListener("click", function(){ abrirNovoLink(p.id); });
-  document.getElementById("btn-add-link-aside").addEventListener("click", function(){ abrirNovoLink(p.id); });
-  document.getElementById("btn-add-md").addEventListener("click", function(){ abrirNovaMarcaDagua(p.id); });
+  document.getElementById("btn-add-link").addEventListener("click", function(){ if (!exigirLogin()) return; abrirNovoLink(p.id); });
+  document.getElementById("btn-add-link-aside").addEventListener("click", function(){ if (!exigirLogin()) return; abrirNovoLink(p.id); });
+  document.getElementById("btn-add-md").addEventListener("click", function(){ if (!exigirLogin()) return; abrirNovaMarcaDagua(p.id); });
   document.getElementById("btn-solicitar").addEventListener("click", function(){ abrirSolicitarVersao(p.id); });
 
   document.getElementById("btn-atualizar-vimeo").addEventListener("click", async function(){
+    if (!exigirLogin()) return;
     var alvo = p.links.filter(function(l){ return !l.duracao || !l.thumbnail; });
     if (!alvo.length) { showCopyToast("Todos os links já têm duração e miniatura."); return; }
     var btn = this;
@@ -1314,9 +1385,9 @@ function renderProjeto(app, id) {
       }
       if (!lid) return;
       var link = p.links.find(function(l){ return l.id===lid; }); if (!link) return;
-      if (action==="edit") { abrirNovoLink(p.id, link); return; }
-      if (action==="altsenha") { abrirAlterarSenha(p.id, link); return; }
-      if (action==="del") { if (!confirm('Excluir o link "'+link.titulo+'"?')) return; store.removeLink(p.id, lid); }
+      if (action==="edit") { if (!exigirLogin()) return; abrirNovoLink(p.id, link); return; }
+      if (action==="altsenha") { if (!exigirLogin()) return; abrirAlterarSenha(p.id, link); return; }
+      if (action==="del") { if (!exigirLogin()) return; if (!confirm('Excluir o link "'+link.titulo+'"?')) return; store.removeLink(p.id, lid); }
     });
   }
 
@@ -1332,8 +1403,8 @@ function renderProjeto(app, id) {
     if (action==="senha") { var box=e.target.closest(".link-senha-box"); if(box) box.classList.toggle("revealed"); return; }
     if (!mid) return;
     var md = p.marcaDagua.find(function(x){ return x.id===mid; }); if (!md) return;
-    if (action==="edit") { abrirNovaMarcaDagua(p.id, md); return; }
-    if (action==="del") { if (!confirm('Excluir "'+md.titulo+'"?')) return; store.removeMarcaDagua(p.id, mid); }
+    if (action==="edit") { if (!exigirLogin()) return; abrirNovaMarcaDagua(p.id, md); return; }
+    if (action==="del") { if (!exigirLogin()) return; if (!confirm('Excluir "'+md.titulo+'"?')) return; store.removeMarcaDagua(p.id, mid); }
   });
 }
 
@@ -1350,7 +1421,7 @@ function route() {
 
 window.addEventListener("hashchange", route);
 store.onChange(route);
-document.getElementById("btn-novo-projeto").addEventListener("click", function(){ abrirNovoProjeto(); });
+document.getElementById("btn-novo-projeto").addEventListener("click", function(){ if (!exigirLogin()) return; abrirNovoProjeto(); });
 document.getElementById("btn-backup").addEventListener("click", function(){ abrirBackup(); });
 route();
 

@@ -157,6 +157,10 @@ var EMAILS_AUTORIZADOS = [
 ];
 var _usuarioAtual = null;
 var _authMod = null;
+// resolve na primeira vez que soubermos se há sessão ativa ou não —
+// usado pelo portão de acesso pra decidir se precisa perguntar algo
+var _authProntoResolve = null;
+var _authPronto = new Promise(function (resolve) { _authProntoResolve = resolve; });
 async function authMod() {
   if (_authMod) return _authMod;
   var appMod = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
@@ -168,10 +172,17 @@ async function authMod() {
     auth: auth, GoogleAuthProvider: authSdk.GoogleAuthProvider,
     signInWithPopup: authSdk.signInWithPopup, signOut: authSdk.signOut
   };
-  authSdk.onAuthStateChanged(auth, function (u) { _usuarioAtual = u; renderAuthBox(); });
+  authSdk.onAuthStateChanged(auth, function (u) {
+    _usuarioAtual = u;
+    renderAuthBox();
+    if (_authProntoResolve) { _authProntoResolve(u); _authProntoResolve = null; }
+  });
   return _authMod;
 }
-authMod().catch(function (e) { console.warn("[Auth] falha ao iniciar:", e); });
+authMod().catch(function (e) {
+  console.warn("[Auth] falha ao iniciar:", e);
+  if (_authProntoResolve) { _authProntoResolve(null); _authProntoResolve = null; }
+});
 
 function usuarioAutorizado() {
   return !!(_usuarioAtual && EMAILS_AUTORIZADOS.indexOf(_usuarioAtual.email) !== -1);
@@ -192,6 +203,11 @@ async function logoutGoogle() {
   await mod.signOut(mod.auth);
 }
 function renderAuthBox() {
+  // controla via CSS todo botão/campo marcado com .edit-only (ver
+  // css/styles.css) — a mesma checagem de sempre (exigirLogin) no
+  // clique continua valendo, isso aqui só evita mostrar o controle
+  document.body.classList.toggle("is-editor", !!_usuarioAtual);
+
   var box = document.getElementById("auth-box");
   if (!box) return;
   if (_usuarioAtual) {
@@ -201,13 +217,81 @@ function renderAuthBox() {
       logoutGoogle();
     });
   } else {
-    box.innerHTML = '<button class="btn btn-ghost btn-sm" id="btn-login">Entrar com Google</button>';
+    // quem escolheu "Leitor" no portão de entrada ainda pode virar
+    // editor depois, sem precisar recarregar a página
+    box.innerHTML = '<button class="auth-link" id="btn-login">Entrar como editor</button>';
     box.querySelector("#btn-login").addEventListener("click", function () {
       loginGoogle().catch(function (e) { console.error(e); showCopyToast("Não foi possível entrar."); });
     });
   }
 }
 renderAuthBox();
+
+/* ---------- Portão de acesso (Leitor / Editor) ----------
+   Antes de deixar usar o catálogo, pergunta se a pessoa quer só ler
+   (sem login) ou editar (login Google, contas autorizadas). "Leitor"
+   fica lembrado neste navegador; "Editor" não precisa, porque a
+   sessão do Firebase já persiste sozinha entre visitas. */
+var GATE_LS_KEY = "acesso_modo";
+function montarGateOverlay() {
+  var overlay = document.createElement("div");
+  overlay.className = "gate-overlay";
+  overlay.innerHTML =
+    '<div class="gate-card">' +
+      '<img src="assets/logo.png" alt="Giros Filmes" class="gate-logo" />' +
+      '<h1 class="gate-titulo">Como você quer entrar?</h1>' +
+      '<div class="gate-opcoes">' +
+        '<button type="button" class="gate-opcao" data-modo="leitor">' +
+          '<span class="gate-opcao-titulo">Leitor</span>' +
+          '<span class="gate-opcao-desc">Só visualizar, sem login.</span>' +
+        '</button>' +
+        '<button type="button" class="gate-opcao" data-modo="editor">' +
+          '<span class="gate-opcao-titulo">Editor</span>' +
+          '<span class="gate-opcao-desc">Entrar com Google para editar.</span>' +
+        '</button>' +
+      '</div>' +
+      '<div class="gate-erro" style="display:none"></div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  return overlay;
+}
+function iniciarPortaoAcesso() {
+  return _authPronto.then(function (usuario) {
+    if (usuario) return; // sessão de editor já ativa
+    if (localStorage.getItem(GATE_LS_KEY) === "leitor") return;
+
+    var overlay = montarGateOverlay();
+    var erroEl = overlay.querySelector(".gate-erro");
+
+    return new Promise(function (resolve) {
+      overlay.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-modo]");
+        if (!btn) return;
+
+        if (btn.dataset.modo === "leitor") {
+          localStorage.setItem(GATE_LS_KEY, "leitor");
+          overlay.remove();
+          resolve();
+          return;
+        }
+
+        // editor
+        var botoes = overlay.querySelectorAll("[data-modo]");
+        botoes.forEach(function (b) { b.disabled = true; });
+        erroEl.style.display = "none";
+        loginGoogle().then(function () {
+          overlay.remove();
+          resolve();
+        }).catch(function (err) {
+          console.error(err);
+          erroEl.textContent = "Não foi possível entrar com o Google. Tente de novo.";
+          erroEl.style.display = "block";
+          botoes.forEach(function (b) { b.disabled = false; });
+        });
+      });
+    });
+  });
+}
 
 var store = {
   onChange: function(fn) { _listeners.push(fn); },
@@ -1092,13 +1176,13 @@ function linkRow(l) {
     '</div></td>'+
     '<td class="col-acoes"><div class="row-actions">'+
       (l.privacidade==='senha'
-        ? '<button class="labeled-btn" data-action="altsenha" data-link-id="'+esc(l.id)+'">🔑 Alterar senha</button>'
+        ? '<button class="labeled-btn edit-only" data-action="altsenha" data-link-id="'+esc(l.id)+'">🔑 Alterar senha</button>'
         : "")+
       '<button class="labeled-btn" data-action="copylink" data-copy-link="'+esc(l.url)+'">📋 Copiar link</button>'+
       '<button class="labeled-btn" data-action="share" data-share-text="'+attrShare(buildShareText(l))+'">'+
         '<img src="./Compartilhar.png" width="14" height="14" alt=""> Compartilhar'+
       '</button>'+
-      '<div class="item-actions">'+
+      '<div class="item-actions edit-only">'+
         '<button class="icon-btn" data-action="edit" data-link-id="'+esc(l.id)+'" title="Editar">✎</button>'+
         '<button class="icon-btn danger" data-action="del" data-link-id="'+esc(l.id)+'" title="Excluir">🗑</button>'+
       '</div>'+
@@ -1184,7 +1268,7 @@ function renderMarcaDagua(p) {
           '<button class="copy-btn" data-copy="'+esc(md.senha)+'">Copiar</button>'+
         '</div>':"")+
       '<a href="'+esc(md.url)+'" target="_blank" rel="noopener" class="btn btn-link-abrir">Abrir link no Vimeo</a>'+
-      '<div class="item-actions">'+
+      '<div class="item-actions edit-only">'+
         '<button class="icon-btn" data-action="edit" data-md-id="'+esc(md.id)+'" title="Editar">✎</button>'+
         '<button class="icon-btn danger" data-action="del" data-md-id="'+esc(md.id)+'" title="Excluir">🗑</button>'+
       '</div>'+
@@ -1258,7 +1342,7 @@ function renderProjeto(app, id) {
   var panelsHtml =
     '<div class="tab-panel active" id="tab-tudo">'+
       renderVideos(p)+
-      '<button class="btn btn-ghost tab-add-btn" id="btn-add-link">+ Adicionar link</button>'+
+      '<button class="btn btn-ghost tab-add-btn edit-only" id="btn-add-link">+ Adicionar link</button>'+
     '</div>';
   tiposPresentes.forEach(function(t){
     var tipoLinks = p.links.filter(function(l){ return l.tipo===t; });
@@ -1276,7 +1360,7 @@ function renderProjeto(app, id) {
   panelsHtml +=
     '<div class="tab-panel" id="tab-marca">'+
       renderMarcaDagua(p)+
-      '<button class="btn btn-ghost tab-add-btn" id="btn-add-md">+ Adicionar versão</button>'+
+      '<button class="btn btn-ghost tab-add-btn edit-only" id="btn-add-md">+ Adicionar versão</button>'+
     '</div>';
 
   app.innerHTML =
@@ -1292,7 +1376,7 @@ function renderProjeto(app, id) {
           (p.categoria!=="Série"?'<div class="meta-item"><span class="meta-label">Ano</span> '+esc(p.ano||"—")+'</div>':"") +
           tempInfo+
         '</div>'+
-        '<div class="proj-aside-actions">'+
+        '<div class="proj-aside-actions edit-only">'+
           '<button class="btn btn-primary" id="btn-add-link-aside">+ Adicionar link</button>'+
           '<button class="btn" id="btn-editar">Editar projeto</button>'+
           '<button class="btn btn-ghost" id="btn-atualizar-vimeo" title="Busca no Vimeo a duração e a miniatura dos links que ainda não têm">Atualizar miniaturas</button>'+
@@ -1423,7 +1507,9 @@ window.addEventListener("hashchange", route);
 store.onChange(route);
 document.getElementById("btn-novo-projeto").addEventListener("click", function(){ if (!exigirLogin()) return; abrirNovoProjeto(); });
 document.getElementById("btn-backup").addEventListener("click", function(){ abrirBackup(); });
-route();
+// o portão de acesso (Leitor/Editor) cobre a tela inteira até a
+// pessoa escolher — só depois disso o catálogo é montado
+iniciarPortaoAcesso().then(route);
 
 function abrirBackup() {
   openModal({
@@ -1434,11 +1520,13 @@ function abrirBackup() {
     bodyHtml:
       '<p style="margin-top:0;font-size:13.5px;color:var(--text-soft)">Baixa um arquivo JSON com todos os projetos cadastrados. Faça isso periodicamente.</p>' +
       '<button type="button" class="btn btn-primary" id="btn-export-json">⬇ Exportar JSON</button>' +
-      '<hr style="margin:18px 0;border:none;border-top:1px solid var(--border)">' +
-      '<p style="margin-top:0;font-size:13.5px;color:var(--text-soft)">Restaura a partir de um JSON exportado. Substitui os projetos atuais pelos do arquivo.</p>' +
-      '<input type="file" id="file-import-json" accept="application/json" style="display:none">' +
-      '<button type="button" class="btn" id="btn-import-json">⬆ Escolher arquivo…</button>' +
-      '<div id="import-json-status" style="font-size:13px;margin-top:8px;color:var(--text-soft)"></div>',
+      '<div class="edit-only">' +
+        '<hr style="margin:18px 0;border:none;border-top:1px solid var(--border)">' +
+        '<p style="margin-top:0;font-size:13.5px;color:var(--text-soft)">Restaura a partir de um JSON exportado. Substitui os projetos atuais pelos do arquivo.</p>' +
+        '<input type="file" id="file-import-json" accept="application/json" style="display:none">' +
+        '<button type="button" class="btn" id="btn-import-json">⬆ Escolher arquivo…</button>' +
+        '<div id="import-json-status" style="font-size:13px;margin-top:8px;color:var(--text-soft)"></div>' +
+      '</div>',
     onMount: function(form) {
       form.querySelector("#btn-export-json").addEventListener("click", function() {
         var json = store.exportAll();
@@ -1454,6 +1542,7 @@ function abrirBackup() {
       var status = form.querySelector("#import-json-status");
       form.querySelector("#btn-import-json").addEventListener("click", function() { fileInput.click(); });
       fileInput.addEventListener("change", async function() {
+        if (!exigirLogin()) { fileInput.value = ""; return; }
         var file = fileInput.files[0];
         if (!file) return;
         if (!confirm("Importar este backup? Os projetos atuais serão substituídos.")) { fileInput.value = ""; return; }

@@ -64,22 +64,6 @@ async function enviarEmailSolicitacao(dados) {
   }
 }
 
-/* Pedido de acesso ao catálogo (portão de acesso, mais abaixo) —
-   reaproveita o mesmo template/serviço do "Solicitar versão" acima,
-   só muda o texto, pra não depender de configurar nada novo no
-   EmailJS. Quem recebe já é a mesma equipe de sempre. */
-async function enviarEmailSolicitacaoAcesso(dados) {
-  await enviarEmailSolicitacao({
-    nome: dados.nome,
-    email: dados.email,
-    projeto: "(solicitação de acesso ao catálogo)",
-    pedido: "Esta pessoa tentou entrar no Catálogo Projetos Giros e a conta " +
-      "dela ainda não está na lista de acesso liberado. Se for pra aprovar, " +
-      "adicione o e-mail acima em EMAILS_AUTORIZADOS (js/bundle.js) e na " +
-      "função emailAutorizado() (firestore.rules) — as duas listas precisam bater.",
-    link: dados.link
-  });
-}
 
 /* ============================================================
    STORE
@@ -125,10 +109,13 @@ async function firestoreMod() {
   if (_firestoreMod) return _firestoreMod;
   var appMod = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
   var fsMod = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
-  var app = appMod.initializeApp(_firestoreCfg.firebaseConfig);
+  // getApps() evita o erro "Firebase App named '[DEFAULT]' already exists"
+  // quando authMod() (mais abaixo) já inicializou o app antes desta chamada.
+  var app = appMod.getApps().length ? appMod.getApps()[0] : appMod.initializeApp(_firestoreCfg.firebaseConfig);
   _firestoreMod = {
     fdb: fsMod.getFirestore(app), doc: fsMod.doc, setDoc: fsMod.setDoc,
     deleteDoc: fsMod.deleteDoc, collection: fsMod.collection, getDocsFromServer: fsMod.getDocsFromServer,
+    getDoc: fsMod.getDoc, serverTimestamp: fsMod.serverTimestamp,
   };
   return _firestoreMod;
 }
@@ -160,27 +147,25 @@ function sincronizar(p) {
 // mesmo (regra exige login autorizado), então tentar cedo só gera
 // erro de permissão no console à toa.
 
-/* ---------- Login (Google) ----------
-   Catálogo restrito: SÓ quem estiver logado com uma das contas abaixo
-   consegue ver o que quer que seja (ver "Portão de acesso", mais
-   abaixo, que só desenha a tela depois de confirmar a conta). Fora
-   controlar a exibição aqui, a regra do Firestore (firestore.rules,
-   no repo do Acervo) também rejeita leitura/escrita remota de quem
-   não estiver na lista — então mesmo inspecionando a rede não dá pra
-   ver os dados sem estar autorizado. Lista tem que bater com a de lá. */
-var EMAILS_AUTORIZADOS = [
-  "acervo@girostraffic.page",
-  "gabrielscmiranda@gmail.com",
-  "datamanager@girostraffic.page",
-  "assistente.extra@girostraffic.page",
-  "assistente.principal@girostraffic.page",
-  "assistente@giros.com.br",
-  "producao.finalizacao@giros.com.br"
-];
+/* ---------- Login (Google) + papel (leitor/editor) ----------
+   Catálogo restrito: SÓ quem estiver logado com uma conta autorizada
+   consegue ver qualquer coisa (ver "Portão de acesso", mais abaixo,
+   que só desenha a tela depois de confirmar a conta). A lista de
+   autorizados não é mais um array fixo aqui — vive na coleção
+   Firestore catalogo_authorizedEmails (doc id = e-mail, campo `papel`
+   = "leitor" ou "editor"), gerenciada pelo admin na tela "Acessos"
+   (botão no cabeçalho, só aparece pra CATALOGO_ADMIN). Fora controlar
+   a exibição aqui, a regra do Firestore (firestore.rules, no repo do
+   Acervo) também rejeita leitura/escrita remota de quem não tiver
+   papel — então mesmo inspecionando a rede não dá pra ver os dados
+   sem estar autorizado. */
+var CATALOGO_ADMIN = "acervo@girostraffic.page";
 var _usuarioAtual = null;
+var _papelAtual = null; // null (sem acesso) | "leitor" | "editor" — só confiável depois de _authPronto
 var _authMod = null;
-// resolve na primeira vez que soubermos se há sessão ativa ou não —
-// usado pelo portão de acesso pra decidir se precisa perguntar algo
+// resolve na primeira vez que soubermos o papel da sessão atual (ou
+// null se deslogado) — usado pelo portão de acesso pra decidir se
+// precisa perguntar algo
 var _authProntoResolve = null;
 var _authPronto = new Promise(function (resolve) { _authProntoResolve = resolve; });
 // preenchidas por iniciarPortaoAcesso() — permitem que o portão reaja
@@ -200,9 +185,7 @@ async function authMod() {
   };
   authSdk.onAuthStateChanged(auth, function (u) {
     _usuarioAtual = u;
-    renderAuthBox();
-    if (_authProntoResolve) { _authProntoResolve(u); _authProntoResolve = null; }
-    if (_gateAtualizar) _gateAtualizar();
+    atualizarPapel();
   });
   return _authMod;
 }
@@ -211,14 +194,39 @@ authMod().catch(function (e) {
   if (_authProntoResolve) { _authProntoResolve(null); _authProntoResolve = null; }
 });
 
+async function papelDoUsuario() {
+  if (!_usuarioAtual) return null;
+  if (_usuarioAtual.email === CATALOGO_ADMIN) return "editor";
+  var mod = await firestoreMod();
+  if (!mod) return null;
+  try {
+    var snap = await mod.getDoc(mod.doc(mod.fdb, "catalogo_authorizedEmails", _usuarioAtual.email));
+    return snap.exists() ? (snap.data().papel || null) : null;
+  } catch (e) {
+    console.error(e);
+    return null;
+  }
+}
+async function atualizarPapel() {
+  _papelAtual = await papelDoUsuario();
+  renderAuthBox();
+  if (_authProntoResolve) { _authProntoResolve(_papelAtual); _authProntoResolve = null; }
+  if (_gateAtualizar) _gateAtualizar();
+}
+
 function usuarioAutorizado() {
-  return !!(_usuarioAtual && EMAILS_AUTORIZADOS.indexOf(_usuarioAtual.email) !== -1);
+  return !!(_usuarioAtual && _papelAtual);
+}
+function usuarioEditor() {
+  return !!(_usuarioAtual && _papelAtual === "editor");
 }
 /* usar no início de qualquer ação que edite/exclua algo — devolve
-   false (e avisa) se não tiver login autorizado, sem nem abrir o modal */
+   false (e avisa) se não tiver permissão de editor, sem nem abrir o modal */
 function exigirLogin() {
-  if (usuarioAutorizado()) return true;
-  showCopyToast(_usuarioAtual ? "Essa conta não tem permissão para editar." : "Faça login (canto superior) para editar.");
+  if (usuarioEditor()) return true;
+  if (!_usuarioAtual) { showCopyToast("Faça login (canto superior) para editar."); return false; }
+  if (_papelAtual === "leitor") { showCopyToast("Esta conta só tem acesso de leitura."); return false; }
+  showCopyToast("Essa conta não tem permissão para editar.");
   return false;
 }
 async function loginGoogle() {
@@ -232,21 +240,22 @@ async function logoutGoogle() {
 function renderAuthBox() {
   // controla via CSS todo botão/campo marcado com .edit-only (ver
   // css/styles.css) — a mesma checagem de sempre (exigirLogin) no
-  // clique continua valendo, isso aqui só evita mostrar o controle
-  document.body.classList.toggle("is-editor", !!_usuarioAtual);
+  // clique continua valendo, isso aqui só evita mostrar o controle.
+  // .admin-only some pra quem não for CATALOGO_ADMIN (botão "Acessos").
+  document.body.classList.toggle("is-editor", usuarioEditor());
+  document.body.classList.toggle("is-admin", !!(_usuarioAtual && _usuarioAtual.email === CATALOGO_ADMIN));
 
   var box = document.getElementById("auth-box");
   if (!box) return;
   if (_usuarioAtual) {
-    box.innerHTML = '<button class="btn btn-ghost btn-sm" id="btn-logout" title="Sair">' + esc(_usuarioAtual.email) + '</button>';
+    var rotulo = _papelAtual === "editor" ? "editor" : (_papelAtual === "leitor" ? "leitor" : "sem acesso");
+    box.innerHTML = '<button class="btn btn-ghost btn-sm" id="btn-logout" title="Sair">' + esc(_usuarioAtual.email) + ' · ' + rotulo + '</button>';
     box.querySelector("#btn-logout").addEventListener("click", function () {
       if (!confirm("Sair da conta?")) return;
       logoutGoogle();
     });
   } else {
-    // quem escolheu "Leitor" no portão de entrada ainda pode virar
-    // editor depois, sem precisar recarregar a página
-    box.innerHTML = '<button class="auth-link" id="btn-login">Entrar como editor</button>';
+    box.innerHTML = '<button class="auth-link" id="btn-login">Entrar</button>';
     box.querySelector("#btn-login").addEventListener("click", function () {
       loginGoogle().catch(function (e) { console.error(e); showCopyToast("Não foi possível entrar."); });
     });
@@ -254,18 +263,81 @@ function renderAuthBox() {
 }
 renderAuthBox();
 
+/* ---------- Pedido de acesso + gestão (tela "Acessos", admin) ----------
+   Substitui o antigo fluxo por e-mail (EmailJS): quem loga sem papel
+   grava um pedido em catalogo_accessRequests/{uid} (self-service, ver
+   regra no firestore.rules); só CATALOGO_ADMIN aprova/recusa/gerencia,
+   pela tela "Acessos" (abrirAcessos(), mais abaixo). Aprovar = escrever
+   em catalogo_authorizedEmails/{email} com o papel escolhido. */
+async function pedirAcessoCatalogo(usuario) {
+  var mod = await firestoreMod();
+  if (!mod) throw new Error("Firestore não está configurado.");
+  await mod.setDoc(mod.doc(mod.fdb, "catalogo_accessRequests", usuario.uid), {
+    email: usuario.email,
+    nome: usuario.displayName || "",
+    criadoEm: mod.serverTimestamp()
+  }, { merge: true });
+}
+async function minhaSolicitacaoCatalogo(usuario) {
+  var mod = await firestoreMod();
+  if (!mod) return null;
+  var snap = await mod.getDoc(mod.doc(mod.fdb, "catalogo_accessRequests", usuario.uid));
+  return snap.exists() ? snap.data() : null;
+}
+async function listarPedidosCatalogo() {
+  var mod = await firestoreMod();
+  if (!mod) return [];
+  var snap = await mod.getDocsFromServer(mod.collection(mod.fdb, "catalogo_accessRequests"));
+  return snap.docs.map(function (d) { return Object.assign({ uid: d.id }, d.data()); });
+}
+async function aprovarPedidoCatalogo(pedido, papel) {
+  var mod = await firestoreMod();
+  await mod.setDoc(mod.doc(mod.fdb, "catalogo_authorizedEmails", pedido.email), {
+    email: pedido.email, papel: papel,
+    liberadoEm: mod.serverTimestamp(), liberadoPor: _usuarioAtual.email
+  });
+  await mod.deleteDoc(mod.doc(mod.fdb, "catalogo_accessRequests", pedido.uid));
+}
+async function recusarPedidoCatalogo(pedido) {
+  var mod = await firestoreMod();
+  await mod.deleteDoc(mod.doc(mod.fdb, "catalogo_accessRequests", pedido.uid));
+}
+async function listarAutorizadosCatalogo() {
+  var mod = await firestoreMod();
+  if (!mod) return [];
+  var snap = await mod.getDocsFromServer(mod.collection(mod.fdb, "catalogo_authorizedEmails"));
+  return snap.docs.map(function (d) { return Object.assign({ email: d.id }, d.data()); });
+}
+async function liberarAcessoCatalogo(email, papel) {
+  var mod = await firestoreMod();
+  await mod.setDoc(mod.doc(mod.fdb, "catalogo_authorizedEmails", email), {
+    email: email, papel: papel,
+    liberadoEm: mod.serverTimestamp(), liberadoPor: _usuarioAtual.email
+  });
+}
+async function alterarPapelCatalogo(email, papel) {
+  var mod = await firestoreMod();
+  await mod.setDoc(mod.doc(mod.fdb, "catalogo_authorizedEmails", email), { papel: papel }, { merge: true });
+}
+async function revogarAcessoCatalogo(email) {
+  var mod = await firestoreMod();
+  await mod.deleteDoc(mod.doc(mod.fdb, "catalogo_authorizedEmails", email));
+}
+
 /* ---------- Portão de acesso (login obrigatório) ----------
-   Catálogo restrito: sem estar logado com uma conta Google autorizada
-   (EMAILS_AUTORIZADOS), a pessoa fica presa neste portão — a tela do
-   catálogo (#app) só é montada depois que iniciarPortaoAcesso() resolve
-   a Promise (ver chamada no rodapé do arquivo). Além do texto na tela,
-   a regra do Firestore também rejeita a leitura remota de quem não
-   estiver autorizado (defesa em profundidade, não só cosmética).
+   Catálogo restrito: sem estar logado com uma conta com papel
+   liberado (catalogo_authorizedEmails), a pessoa fica presa neste
+   portão — a tela do catálogo (#app) só é montada depois que
+   iniciarPortaoAcesso() resolve a Promise (ver chamada no rodapé do
+   arquivo). Além do texto na tela, a regra do Firestore também
+   rejeita a leitura remota de quem não estiver autorizado (defesa em
+   profundidade, não só cosmética).
 
    Três estados possíveis, reavaliados a cada mudança de sessão
-   (_gateAtualizar, chamado de dentro de onAuthStateChanged):
-     1. Deslogado            → botão "Entrar com Google".
-     2. Logado, sem permissão → mostra a conta + "Solicitar acesso".
+   (_gateAtualizar, chamado de dentro de atualizarPapel()):
+     1. Deslogado             → botão "Entrar com Google".
+     2. Logado, sem permissão → mostra a conta + "Pedir acesso"
+                                 (ou "pedido enviado", se já pediu).
      3. Logado, autorizado    → fecha o portão e libera a tela.
    Se o portão já tinha sido liberado (usuário autorizado navegando)
    e a sessão vira não-autorizada (ex.: clicou em sair), recarrega a
@@ -284,8 +356,9 @@ function montarGateOverlay() {
       '</div>' +
       '<div class="gate-negado" style="display:none">' +
         '<p class="gate-conta"></p>' +
+        '<p class="gate-enviado" style="display:none">Pedido enviado. Você será avisado quando o acesso for liberado.</p>' +
         '<div class="gate-acoes">' +
-          '<button type="button" class="btn btn-primary" id="gate-btn-solicitar">Solicitar acesso</button>' +
+          '<button type="button" class="btn btn-primary" id="gate-btn-solicitar">Pedir acesso</button>' +
           '<button type="button" class="btn btn-ghost" id="gate-btn-trocar">Usar outra conta</button>' +
         '</div>' +
       '</div>' +
@@ -297,9 +370,8 @@ function montarGateOverlay() {
 function iniciarPortaoAcesso() {
   return new Promise(function (resolve) {
     var overlay = null;
-    var jaSolicitou = false;
 
-    function estadoAtual() {
+    async function estadoAtual() {
       if (usuarioAutorizado()) {
         if (overlay) { overlay.remove(); overlay = null; }
         if (!_gateResolvido) { _gateResolvido = true; resolve(); }
@@ -328,19 +400,15 @@ function iniciarPortaoAcesso() {
           logoutGoogle().catch(function (err) { console.error(err); });
         });
         overlay.querySelector("#gate-btn-solicitar").addEventListener("click", function () {
-          if (jaSolicitou || !_usuarioAtual) return;
+          if (!_usuarioAtual) return;
           var btn = overlay.querySelector("#gate-btn-solicitar");
           btn.disabled = true; btn.textContent = "Enviando…";
-          enviarEmailSolicitacaoAcesso({
-            nome: _usuarioAtual.displayName || _usuarioAtual.email,
-            email: _usuarioAtual.email,
-            link: location.href
-          }).then(function () {
-            jaSolicitou = true;
-            btn.textContent = "Pedido enviado ✓";
+          pedirAcessoCatalogo(_usuarioAtual).then(function () {
+            overlay.querySelector(".gate-enviado").style.display = "block";
+            btn.style.display = "none";
           }).catch(function (err) {
             console.error(err);
-            btn.disabled = false; btn.textContent = "Solicitar acesso";
+            btn.disabled = false; btn.textContent = "Pedir acesso";
             var erroEl = overlay.querySelector(".gate-erro");
             erroEl.textContent = "Não foi possível enviar o pedido (" + (err && err.message ? err.message : "erro") + ").";
             erroEl.style.display = "block";
@@ -354,6 +422,10 @@ function iniciarPortaoAcesso() {
         overlay.querySelector(".gate-conta").textContent = _usuarioAtual.email;
         overlay.querySelector(".gate-acoes-login").style.display = "none";
         overlay.querySelector(".gate-negado").style.display = "block";
+        var jaEnviado = false;
+        try { jaEnviado = !!(await minhaSolicitacaoCatalogo(_usuarioAtual)); } catch (e) { console.error(e); }
+        overlay.querySelector(".gate-enviado").style.display = jaEnviado ? "block" : "none";
+        overlay.querySelector("#gate-btn-solicitar").style.display = jaEnviado ? "none" : "inline-flex";
       } else {
         overlay.querySelector(".gate-titulo").textContent = "Acesso restrito";
         overlay.querySelector(".gate-desc").textContent = "Entre com sua conta Google autorizada para ver o catálogo.";
@@ -1581,11 +1653,160 @@ window.addEventListener("hashchange", route);
 store.onChange(route);
 document.getElementById("btn-novo-projeto").addEventListener("click", function(){ if (!exigirLogin()) return; abrirNovoProjeto(); });
 document.getElementById("btn-backup").addEventListener("click", function(){ abrirBackup(); });
+document.getElementById("btn-acessos").addEventListener("click", function(){ abrirAcessos(); });
 // o portão de acesso cobre a tela inteira até confirmar login
 // autorizado — só depois disso é que busca dados e monta o catálogo
 iniciarPortaoAcesso().then(function () {
   return hidratarDoFirestore().catch(function (e) { console.warn("Firestore: falha ao carregar.", e); });
 }).then(route);
+
+function formatarDataCatalogo(ts) {
+  if (!ts) return "—";
+  var d = ts.toDate ? ts.toDate() : new Date(ts);
+  return d.toLocaleDateString("pt-BR") + " " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+
+/* Tela "Acessos" — só abre pra CATALOGO_ADMIN (botão no cabeçalho já
+   fica escondido via CSS .admin-only pra qualquer outra conta, isso
+   aqui é só uma segunda trava). Aprova/recusa pedidos e gerencia a
+   lista de e-mails liberados (papel leitor/editor), tudo direto no
+   Firestore — nunca mais precisa mexer/republicar o firestore.rules
+   pra liberar uma pessoa nova. */
+function abrirAcessos() {
+  if (!_usuarioAtual || _usuarioAtual.email !== CATALOGO_ADMIN) return;
+  openModal({
+    title: "Acessos",
+    subtitle: "Quem pode entrar no Catálogo Projetos Giros",
+    submitLabel: "Fechar",
+    wide: true,
+    onSubmit: async function () {},
+    bodyHtml:
+      '<div class="acessos-secao">' +
+        '<h3>Pedidos pendentes</h3>' +
+        '<div id="acessos-pedidos" class="muted">Carregando…</div>' +
+      '</div>' +
+      '<div class="acessos-secao">' +
+        '<h3>Liberar um e-mail direto</h3>' +
+        '<div class="acessos-form-liberar">' +
+          '<input type="email" id="acessos-novo-email" class="input" placeholder="nome@exemplo.com" />' +
+          '<select id="acessos-novo-papel" class="input">' +
+            '<option value="leitor">Leitor</option>' +
+            '<option value="editor">Editor</option>' +
+          '</select>' +
+          '<button type="button" class="btn btn-primary" id="acessos-btn-liberar">Liberar</button>' +
+        '</div>' +
+        '<div id="acessos-liberar-status" class="muted" style="font-size:13px;margin-top:6px"></div>' +
+      '</div>' +
+      '<div class="acessos-secao">' +
+        '<h3>Acessos liberados</h3>' +
+        '<div id="acessos-lista" class="muted">Carregando…</div>' +
+      '</div>',
+    onMount: function (form) {
+      var elPedidos = form.querySelector("#acessos-pedidos");
+      var elLista = form.querySelector("#acessos-lista");
+
+      function carregarPedidos() {
+        listarPedidosCatalogo().then(function (pedidos) {
+          if (!pedidos.length) { elPedidos.innerHTML = '<span class="muted">Nenhum pedido pendente.</span>'; return; }
+          elPedidos.innerHTML = pedidos.map(function (p) {
+            return '<div class="acesso-linha" data-uid="' + esc(p.uid) + '">' +
+              '<div><strong>' + esc(p.email) + '</strong>' + (p.nome ? ' · ' + esc(p.nome) : '') +
+                '<div class="muted" style="font-size:12px">' + formatarDataCatalogo(p.criadoEm) + '</div></div>' +
+              '<div class="acesso-acoes">' +
+                '<button type="button" class="btn btn-primary btn-sm" data-aprovar="leitor">Aprovar como leitor</button>' +
+                '<button type="button" class="btn btn-primary btn-sm" data-aprovar="editor">Aprovar como editor</button>' +
+                '<button type="button" class="btn btn-ghost btn-sm" data-recusar>Recusar</button>' +
+              '</div>' +
+            '</div>';
+          }).join("");
+          elPedidos.querySelectorAll("[data-aprovar]").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+              var uid = btn.closest(".acesso-linha").dataset.uid;
+              var pedido = pedidos.find(function (p) { return p.uid === uid; });
+              elPedidos.querySelectorAll("button").forEach(function (b) { b.disabled = true; });
+              aprovarPedidoCatalogo(pedido, btn.dataset.aprovar).then(function () {
+                carregarPedidos(); carregarLista();
+              }).catch(function (err) {
+                alert("Não foi possível aprovar: " + err.message);
+                elPedidos.querySelectorAll("button").forEach(function (b) { b.disabled = false; });
+              });
+            });
+          });
+          elPedidos.querySelectorAll("[data-recusar]").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+              var uid = btn.closest(".acesso-linha").dataset.uid;
+              var pedido = pedidos.find(function (p) { return p.uid === uid; });
+              if (!confirm("Recusar o pedido de " + pedido.email + "?")) return;
+              btn.disabled = true;
+              recusarPedidoCatalogo(pedido).then(carregarPedidos)
+                .catch(function (err) { alert("Não foi possível recusar: " + err.message); btn.disabled = false; });
+            });
+          });
+        }).catch(function (err) {
+          console.error(err);
+          elPedidos.innerHTML = '<span class="muted">Não foi possível carregar (' + err.message + ').</span>';
+        });
+      }
+
+      function carregarLista() {
+        listarAutorizadosCatalogo().then(function (lista) {
+          var linhaAdmin = '<div class="acesso-linha"><div><strong>' + esc(CATALOGO_ADMIN) + '</strong> <span class="muted">(admin principal)</span></div></div>';
+          var linhas = lista.map(function (a) {
+            return '<div class="acesso-linha" data-email="' + esc(a.email) + '">' +
+              '<div><strong>' + esc(a.email) + '</strong>' +
+                '<div class="muted" style="font-size:12px">liberado em ' + formatarDataCatalogo(a.liberadoEm) + (a.liberadoPor ? ' por ' + esc(a.liberadoPor) : '') + '</div></div>' +
+              '<div class="acesso-acoes">' +
+                '<select class="input acesso-papel-select" style="width:auto">' +
+                  '<option value="leitor"' + (a.papel !== "editor" ? " selected" : "") + '>Leitor</option>' +
+                  '<option value="editor"' + (a.papel === "editor" ? " selected" : "") + '>Editor</option>' +
+                '</select>' +
+                '<button type="button" class="btn btn-danger btn-sm" data-revogar>Remover</button>' +
+              '</div>' +
+            '</div>';
+          }).join("");
+          elLista.innerHTML = linhaAdmin + linhas;
+          elLista.querySelectorAll(".acesso-papel-select").forEach(function (sel) {
+            sel.addEventListener("change", function () {
+              var email = sel.closest(".acesso-linha").dataset.email;
+              sel.disabled = true;
+              alterarPapelCatalogo(email, sel.value).then(carregarLista)
+                .catch(function (err) { alert("Não foi possível alterar: " + err.message); sel.disabled = false; });
+            });
+          });
+          elLista.querySelectorAll("[data-revogar]").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+              var email = btn.closest(".acesso-linha").dataset.email;
+              if (!confirm("Remover o acesso de " + email + "?")) return;
+              btn.disabled = true;
+              revogarAcessoCatalogo(email).then(carregarLista)
+                .catch(function (err) { alert("Não foi possível remover: " + err.message); btn.disabled = false; });
+            });
+          });
+        }).catch(function (err) {
+          console.error(err);
+          elLista.innerHTML = '<span class="muted">Não foi possível carregar (' + err.message + ').</span>';
+        });
+      }
+
+      form.querySelector("#acessos-btn-liberar").addEventListener("click", function () {
+        var input = form.querySelector("#acessos-novo-email");
+        var papel = form.querySelector("#acessos-novo-papel").value;
+        var email = input.value.trim();
+        var status = form.querySelector("#acessos-liberar-status");
+        if (!email || email.indexOf("@") === -1) { status.textContent = "Digite um e-mail válido."; return; }
+        status.textContent = "Liberando…";
+        liberarAcessoCatalogo(email, papel).then(function () {
+          input.value = "";
+          status.textContent = "✓ Liberado.";
+          carregarLista();
+        }).catch(function (err) { status.textContent = "✗ Erro: " + err.message; });
+      });
+
+      carregarPedidos();
+      carregarLista();
+    }
+  });
+}
 
 function abrirBackup() {
   openModal({

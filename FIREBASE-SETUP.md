@@ -1,31 +1,45 @@
-## Acesso restrito (login Google obrigatório) — ação pendente no console
+## Acesso restrito, com papel leitor/editor (2026-08-11) — ação pendente no console
 
-O código já foi atualizado pra exigir login com conta Google autorizada
-pra ver qualquer coisa no Catálogo (antes, a leitura era livre pra
-qualquer um com o link). Faltam **dois passos manuais no console do
-Firebase** pra isso valer de verdade — sem eles, o portão na tela
-funciona, mas a trava de verdade (no banco) ainda não está ativa:
+O Catálogo exige login com conta Google autorizada pra ver qualquer
+coisa (ninguém entra sem estar liberado). A lista de quem pode entrar
+**não vive mais no código** — é a coleção Firestore
+`catalogo_authorizedEmails` (doc id = e-mail, campo `papel`: `"leitor"`
+ou `"editor"`), gerenciada inteira pela tela **🔑 Acessos** no
+cabeçalho do app (só aparece logado como o admin principal,
+`acervo@girostraffic.page`, fixo em `CATALOGO_ADMIN` no
+[`js/bundle.js`](./js/bundle.js)).
 
-1. **Publicar a regra nova do Firestore** — abra o
-   [Console do Firebase](https://console.firebase.google.com/) → projeto
-   **giros-imagens** → Firestore Database → aba **Regras** → cole o
-   conteúdo atualizado de
+Quem tenta entrar sem estar liberado cai num portão com botão **"Pedir
+acesso"** — grava um pedido em `catalogo_accessRequests`, que aparece
+na tela Acessos pro admin aprovar (como leitor ou editor) ou recusar.
+Leitor só vê o catálogo; editor também cadastra/edita/exclui.
+
+**Falta publicar a regra nova do Firestore** pra isso valer de verdade
+no servidor (sem isso, o portão na tela funciona, mas a trava real no
+banco ainda não está ativa):
+
+1. Abra o [Console do Firebase](https://console.firebase.google.com/) →
+   projeto **giros-imagens** → Firestore Database → aba **Regras**.
+2. Cole o conteúdo atualizado de
    [`firestore.rules`](../Plataforma_Acervo_Giros/Plataforma/firestore.rules)
-   (a coleção `catalogo_projetos` agora exige `emailAutorizado()` pra
-   **ler**, não só pra escrever) → **Publicar**.
-2. **Confirmar que o login Google está ativado** — Console do Firebase →
-   **Authentication** → aba **Sign-in method** → **Google** precisa
-   estar "Enabled". Confira também em **Authentication → Settings →
-   Authorized domains** se o domínio onde o Catálogo é publicado (ex.:
-   `*.github.io`) está na lista — sem isso, o popup de login falha.
+   (agora tem `catalogoAdminPrincipal()`, `catalogoPapel()` e as
+   coleções `catalogo_authorizedEmails`/`catalogo_accessRequests` —
+   as regras do Acervo, no mesmo arquivo, não mudaram).
+3. **Publicar.**
+4. Logo em seguida, logar no Catálogo como `acervo@girostraffic.page`
+   e usar a tela **Acessos** → "Liberar um e-mail direto" pra
+   recadastrar (com o papel `editor`) os e-mails que antes estavam na
+   lista fixa: `gabrielscmiranda@gmail.com`,
+   `datamanager@girostraffic.page`,
+   `assistente.extra@girostraffic.page`,
+   `assistente.principal@girostraffic.page`,
+   `assistente@giros.com.br`, `producao.finalizacao@giros.com.br` —
+   senão eles ficam sem acesso entre o passo 3 e este.
 
-Se alguém precisar de acesso e não estiver na lista, a própria tela tem
-um botão **"Solicitar acesso"** que manda um e-mail (via EmailJS, mesmo
-mecanismo do "Solicitar versão") pra equipe. Pra liberar, adicione o
-e-mail em dois lugares (têm que bater):
-- `EMAILS_AUTORIZADOS` em [`js/bundle.js`](./js/bundle.js)
-- a lista dentro de `emailAutorizado()` em `firestore.rules` (e publicar
-  de novo, passo 1 acima)
+Confira também, uma vez só, se o login Google está ativado: Console do
+Firebase → **Authentication** → aba **Sign-in method** → **Google**
+"Enabled", e em **Authentication → Settings → Authorized domains** se o
+domínio onde o Catálogo é publicado (ex.: `*.github.io`) está na lista.
 
 ---
 

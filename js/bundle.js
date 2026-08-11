@@ -210,6 +210,7 @@ async function papelDoUsuario() {
 async function atualizarPapel() {
   _papelAtual = await papelDoUsuario();
   renderAuthBox();
+  if (usuarioEditor()) sincronizarTokenVimeo();
   if (_authProntoResolve) { _authProntoResolve(_papelAtual); _authProntoResolve = null; }
   if (_gateAtualizar) _gateAtualizar();
 }
@@ -322,6 +323,39 @@ async function alterarPapelCatalogo(email, papel) {
 async function revogarAcessoCatalogo(email) {
   var mod = await firestoreMod();
   await mod.deleteDoc(mod.doc(mod.fdb, "catalogo_authorizedEmails", email));
+}
+
+/* Token da API do Vimeo compartilhado (catalogo_config/vimeo) — assim todo
+   editor autorizado busca duração/miniatura e troca senha de vídeo sem
+   precisar colar o token manualmente no navegador (era só local antes,
+   por isso só funcionava em quem tinha colado em vimeo-teste.html). */
+async function carregarTokenVimeoCompartilhado() {
+  var mod = await firestoreMod();
+  if (!mod) return null;
+  try {
+    var snap = await mod.getDoc(mod.doc(mod.fdb, "catalogo_config", "vimeo"));
+    return snap.exists() ? (snap.data().token || null) : null;
+  } catch (e) {
+    console.error(e);
+    return null;
+  }
+}
+async function salvarTokenVimeoCompartilhado(token) {
+  var mod = await firestoreMod();
+  await mod.setDoc(mod.doc(mod.fdb, "catalogo_config", "vimeo"), {
+    token: token, atualizadoEm: mod.serverTimestamp(), atualizadoPor: _usuarioAtual.email
+  });
+}
+/* Puxa o token compartilhado pro localStorage deste navegador (mesma chave
+   que fetchVimeoDadosApi/alterarSenhaVimeoApi já leem) sempre que a sessão
+   vira editor — não sobrescreve com null se o Firestore ainda não tiver nada. */
+async function sincronizarTokenVimeo() {
+  try {
+    var token = await carregarTokenVimeoCompartilhado();
+    if (token) localStorage.setItem(VIMEO_TOKEN_KEY, token);
+  } catch (e) {
+    console.warn("[Vimeo API] falha ao sincronizar token compartilhado:", e);
+  }
 }
 
 /* ---------- Portão de acesso (login obrigatório) ----------
@@ -1002,7 +1036,7 @@ function abrirNovoLink(projetoId, existente, tipoForcado) {
       var hint = form.querySelector("#vimeo-hint");
       var temToken = !!localStorage.getItem(VIMEO_TOKEN_KEY);
       if (!temToken && !ed) {
-        hint.textContent = "💡 Sem token da API do Vimeo configurado — só dá pra buscar o título (vídeos públicos). Configure em vimeo-teste.html pra também preencher a privacidade.";
+        hint.textContent = "💡 Token da API do Vimeo ainda não sincronizado neste navegador — só dá pra buscar o título (vídeos públicos). Peça para " + CATALOGO_ADMIN + " configurar em Acessos → Token da API do Vimeo, ou recarregue a página se ele já configurou.";
         hint.style.display = "block";
       }
 
@@ -1700,6 +1734,15 @@ function abrirAcessos() {
       '<div class="acessos-secao">' +
         '<h3>Acessos liberados</h3>' +
         '<div id="acessos-lista" class="muted">Carregando…</div>' +
+      '</div>' +
+      '<div class="acessos-secao">' +
+        '<h3>Token da API do Vimeo</h3>' +
+        '<p class="muted" style="font-size:13px;margin-top:0">Compartilhado com todo editor autorizado (sincroniza sozinho no navegador de cada um) — usado pra buscar título/duração/miniatura e trocar senha de vídeo direto no Vimeo.</p>' +
+        '<div class="acessos-form-liberar">' +
+          '<input type="password" id="acessos-vimeo-token" class="input" placeholder="Personal Access Token do Vimeo" />' +
+          '<button type="button" class="btn btn-primary" id="acessos-btn-vimeo-token">Salvar token</button>' +
+        '</div>' +
+        '<div id="acessos-vimeo-token-status" class="muted" style="font-size:13px;margin-top:6px"></div>' +
       '</div>',
     onMount: function (form) {
       var elPedidos = form.querySelector("#acessos-pedidos");
@@ -1800,6 +1843,22 @@ function abrirAcessos() {
           status.textContent = "✓ Liberado.";
           carregarLista();
         }).catch(function (err) { status.textContent = "✗ Erro: " + err.message; });
+      });
+
+      var elVimeoToken = form.querySelector("#acessos-vimeo-token");
+      var elVimeoStatus = form.querySelector("#acessos-vimeo-token-status");
+      carregarTokenVimeoCompartilhado().then(function (token) {
+        if (token) { elVimeoToken.value = token; elVimeoStatus.textContent = "Token configurado."; }
+        else elVimeoStatus.textContent = "Nenhum token configurado ainda.";
+      }).catch(function () { elVimeoStatus.textContent = "Não foi possível carregar o token atual."; });
+      form.querySelector("#acessos-btn-vimeo-token").addEventListener("click", function () {
+        var token = elVimeoToken.value.trim();
+        if (!token) { elVimeoStatus.textContent = "Cole um token antes de salvar."; return; }
+        elVimeoStatus.textContent = "Salvando…";
+        salvarTokenVimeoCompartilhado(token).then(function () {
+          localStorage.setItem(VIMEO_TOKEN_KEY, token);
+          elVimeoStatus.textContent = "✓ Salvo — sincroniza sozinho no navegador dos outros editores.";
+        }).catch(function (err) { elVimeoStatus.textContent = "✗ Erro: " + err.message; });
       });
 
       carregarPedidos();

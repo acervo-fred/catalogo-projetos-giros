@@ -563,30 +563,20 @@ a { color: inherit; text-decoration: none; }
 }
 .auth-link:hover { color: var(--text-soft); }
 
-/* ---- Portão de acesso (Leitor / Editor) ---- */
+/* ---- Portão de acesso (login Google obrigatório) ---- */
 .gate-overlay {
   position: fixed; inset: 0; z-index: 1000; background: var(--bg);
   display: flex; align-items: center; justify-content: center; padding: 24px;
 }
 .gate-card { width: 100%; max-width: 460px; text-align: center; }
 .gate-logo { height: 72px; width: auto; margin: 0 auto 28px; display: block; }
-.gate-titulo { font-size: 22px; font-weight: 650; margin: 0 0 22px; }
-.gate-opcoes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.gate-opcao {
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
-  padding: 22px 14px; border-radius: var(--r-md); border: 1px solid var(--border);
-  background: var(--surface); cursor: pointer; transition: border-color 0.15s, background 0.15s;
-}
-.gate-opcao:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
-.gate-opcao:disabled { opacity: 0.6; cursor: default; }
-.gate-opcao-titulo { font-size: 15.5px; font-weight: 650; color: var(--text); }
-.gate-opcao-desc { font-size: 12.5px; color: var(--text-faint); }
+.gate-titulo { font-size: 22px; font-weight: 650; margin: 0 0 10px; }
+.gate-desc { font-size: 13.5px; color: var(--text-faint); margin: 0 0 24px; }
+.gate-acoes { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.gate-conta { font-size: 13px; font-weight: 650; color: var(--text-soft); margin: 0 0 16px; }
 .gate-erro { margin-top: 16px; font-size: 13px; color: #c0392b; }
-@media (max-width: 480px) {
-  .gate-opcoes { grid-template-columns: 1fr; }
-}
 
-/* Modo Leitor: some com todo botão/link marcado como só-de-editor.
-   body.is-editor é alternado em renderAuthBox(), a cada mudança de
-   sessão — inclusive antes do 1º desenho da página. */
+/* Some com todo botão/link marcado como só-de-editor pra quem não
+   estiver logado. body.is-editor é alternado em renderAuthBox(), a
+   cada mudança de sessão — inclusive antes do 1º desenho da página. */
 body:not(.is-editor) .edit-only { display: none !important; }

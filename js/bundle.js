@@ -64,6 +64,23 @@ async function enviarEmailSolicitacao(dados) {
   }
 }
 
+/* Pedido de acesso ao catálogo (portão de acesso, mais abaixo) —
+   reaproveita o mesmo template/serviço do "Solicitar versão" acima,
+   só muda o texto, pra não depender de configurar nada novo no
+   EmailJS. Quem recebe já é a mesma equipe de sempre. */
+async function enviarEmailSolicitacaoAcesso(dados) {
+  await enviarEmailSolicitacao({
+    nome: dados.nome,
+    email: dados.email,
+    projeto: "(solicitação de acesso ao catálogo)",
+    pedido: "Esta pessoa tentou entrar no Catálogo Projetos Giros e a conta " +
+      "dela ainda não está na lista de acesso liberado. Se for pra aprovar, " +
+      "adicione o e-mail acima em EMAILS_AUTORIZADOS (js/bundle.js) e na " +
+      "função emailAutorizado() (firestore.rules) — as duas listas precisam bater.",
+    link: dados.link
+  });
+}
+
 /* ============================================================
    STORE
    ============================================================ */
@@ -138,20 +155,25 @@ async function hidratarDoFirestore() {
 function sincronizar(p) {
   pushProjetoRemoto(p).catch(function(e) { console.warn("Firestore: falha ao salvar projeto.", e); });
 }
-hidratarDoFirestore();
+// Hidratação inicial só roda depois do portão de acesso (mais abaixo,
+// perto do roteador) — antes disso o Firestore rejeitaria a leitura
+// mesmo (regra exige login autorizado), então tentar cedo só gera
+// erro de permissão no console à toa.
 
 /* ---------- Login (Google) ----------
-   A leitura do catálogo sempre foi (e continua) livre pra qualquer
-   um com o link. Isso aqui trava só a ESCRITA: sem estar logado com
-   uma das contas abaixo, a interface nem deixa abrir os formulários
-   de editar/excluir — e mesmo que abrisse, a regra do Firestore
-   (firestore.rules, no repo do Acervo) rejeitaria a gravação remota.
-   Lista tem que bater com a de lá. */
+   Catálogo restrito: SÓ quem estiver logado com uma das contas abaixo
+   consegue ver o que quer que seja (ver "Portão de acesso", mais
+   abaixo, que só desenha a tela depois de confirmar a conta). Fora
+   controlar a exibição aqui, a regra do Firestore (firestore.rules,
+   no repo do Acervo) também rejeita leitura/escrita remota de quem
+   não estiver na lista — então mesmo inspecionando a rede não dá pra
+   ver os dados sem estar autorizado. Lista tem que bater com a de lá. */
 var EMAILS_AUTORIZADOS = [
   "acervo@girostraffic.page",
   "gabrielscmiranda@gmail.com",
   "datamanager@girostraffic.page",
   "assistente.extra@girostraffic.page",
+  "assistente.principal@girostraffic.page",
   "assistente@giros.com.br",
   "producao.finalizacao@giros.com.br"
 ];
@@ -161,6 +183,10 @@ var _authMod = null;
 // usado pelo portão de acesso pra decidir se precisa perguntar algo
 var _authProntoResolve = null;
 var _authPronto = new Promise(function (resolve) { _authProntoResolve = resolve; });
+// preenchidas por iniciarPortaoAcesso() — permitem que o portão reaja
+// a mudanças de sessão (login/logout) mesmo depois de já ter aberto
+var _gateAtualizar = null;
+var _gateResolvido = false;
 async function authMod() {
   if (_authMod) return _authMod;
   var appMod = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
@@ -176,6 +202,7 @@ async function authMod() {
     _usuarioAtual = u;
     renderAuthBox();
     if (_authProntoResolve) { _authProntoResolve(u); _authProntoResolve = null; }
+    if (_gateAtualizar) _gateAtualizar();
   });
   return _authMod;
 }
@@ -227,28 +254,40 @@ function renderAuthBox() {
 }
 renderAuthBox();
 
-/* ---------- Portão de acesso (Leitor / Editor) ----------
-   Antes de deixar usar o catálogo, pergunta se a pessoa quer só ler
-   (sem login) ou editar (login Google, contas autorizadas). "Leitor"
-   fica lembrado neste navegador; "Editor" não precisa, porque a
-   sessão do Firebase já persiste sozinha entre visitas. */
-var GATE_LS_KEY = "acesso_modo";
+/* ---------- Portão de acesso (login obrigatório) ----------
+   Catálogo restrito: sem estar logado com uma conta Google autorizada
+   (EMAILS_AUTORIZADOS), a pessoa fica presa neste portão — a tela do
+   catálogo (#app) só é montada depois que iniciarPortaoAcesso() resolve
+   a Promise (ver chamada no rodapé do arquivo). Além do texto na tela,
+   a regra do Firestore também rejeita a leitura remota de quem não
+   estiver autorizado (defesa em profundidade, não só cosmética).
+
+   Três estados possíveis, reavaliados a cada mudança de sessão
+   (_gateAtualizar, chamado de dentro de onAuthStateChanged):
+     1. Deslogado            → botão "Entrar com Google".
+     2. Logado, sem permissão → mostra a conta + "Solicitar acesso".
+     3. Logado, autorizado    → fecha o portão e libera a tela.
+   Se o portão já tinha sido liberado (usuário autorizado navegando)
+   e a sessão vira não-autorizada (ex.: clicou em sair), recarrega a
+   página — mais simples e seguro do que tentar "apagar" o que já
+   tinha sido desenhado na tela. */
 function montarGateOverlay() {
   var overlay = document.createElement("div");
   overlay.className = "gate-overlay";
   overlay.innerHTML =
     '<div class="gate-card">' +
       '<img src="assets/logo.png" alt="Giros Filmes" class="gate-logo" />' +
-      '<h1 class="gate-titulo">Como você quer entrar?</h1>' +
-      '<div class="gate-opcoes">' +
-        '<button type="button" class="gate-opcao" data-modo="leitor">' +
-          '<span class="gate-opcao-titulo">Leitor</span>' +
-          '<span class="gate-opcao-desc">Só visualizar, sem login.</span>' +
-        '</button>' +
-        '<button type="button" class="gate-opcao" data-modo="editor">' +
-          '<span class="gate-opcao-titulo">Editor</span>' +
-          '<span class="gate-opcao-desc">Entrar com Google para editar.</span>' +
-        '</button>' +
+      '<h1 class="gate-titulo">Acesso restrito</h1>' +
+      '<p class="gate-desc">Entre com sua conta Google autorizada para ver o catálogo.</p>' +
+      '<div class="gate-acoes gate-acoes-login">' +
+        '<button type="button" class="btn btn-primary" id="gate-btn-login">Entrar com Google</button>' +
+      '</div>' +
+      '<div class="gate-negado" style="display:none">' +
+        '<p class="gate-conta"></p>' +
+        '<div class="gate-acoes">' +
+          '<button type="button" class="btn btn-primary" id="gate-btn-solicitar">Solicitar acesso</button>' +
+          '<button type="button" class="btn btn-ghost" id="gate-btn-trocar">Usar outra conta</button>' +
+        '</div>' +
       '</div>' +
       '<div class="gate-erro" style="display:none"></div>' +
     '</div>';
@@ -256,40 +295,75 @@ function montarGateOverlay() {
   return overlay;
 }
 function iniciarPortaoAcesso() {
-  return _authPronto.then(function (usuario) {
-    if (usuario) return; // sessão de editor já ativa
-    if (localStorage.getItem(GATE_LS_KEY) === "leitor") return;
+  return new Promise(function (resolve) {
+    var overlay = null;
+    var jaSolicitou = false;
 
-    var overlay = montarGateOverlay();
-    var erroEl = overlay.querySelector(".gate-erro");
+    function estadoAtual() {
+      if (usuarioAutorizado()) {
+        if (overlay) { overlay.remove(); overlay = null; }
+        if (!_gateResolvido) { _gateResolvido = true; resolve(); }
+        return;
+      }
+      if (_gateResolvido) {
+        // portão já tinha sido liberado antes (ex.: clicou em "Sair") —
+        // recarrega pra fechar tudo que já estava desenhado na tela
+        location.reload();
+        return;
+      }
 
-    return new Promise(function (resolve) {
-      overlay.addEventListener("click", function (e) {
-        var btn = e.target.closest("[data-modo]");
-        if (!btn) return;
-
-        if (btn.dataset.modo === "leitor") {
-          localStorage.setItem(GATE_LS_KEY, "leitor");
-          overlay.remove();
-          resolve();
-          return;
-        }
-
-        // editor
-        var botoes = overlay.querySelectorAll("[data-modo]");
-        botoes.forEach(function (b) { b.disabled = true; });
-        erroEl.style.display = "none";
-        loginGoogle().then(function () {
-          overlay.remove();
-          resolve();
-        }).catch(function (err) {
-          console.error(err);
-          erroEl.textContent = "Não foi possível entrar com o Google. Tente de novo.";
-          erroEl.style.display = "block";
-          botoes.forEach(function (b) { b.disabled = false; });
+      if (!overlay) {
+        overlay = montarGateOverlay();
+        overlay.querySelector("#gate-btn-login").addEventListener("click", function () {
+          var btn = overlay.querySelector("#gate-btn-login");
+          btn.disabled = true;
+          overlay.querySelector(".gate-erro").style.display = "none";
+          loginGoogle().catch(function (err) {
+            console.error(err);
+            overlay.querySelector(".gate-erro").textContent = "Não foi possível entrar com o Google. Tente de novo.";
+            overlay.querySelector(".gate-erro").style.display = "block";
+          }).finally(function () { btn.disabled = false; });
         });
-      });
-    });
+        overlay.querySelector("#gate-btn-trocar").addEventListener("click", function () {
+          logoutGoogle().catch(function (err) { console.error(err); });
+        });
+        overlay.querySelector("#gate-btn-solicitar").addEventListener("click", function () {
+          if (jaSolicitou || !_usuarioAtual) return;
+          var btn = overlay.querySelector("#gate-btn-solicitar");
+          btn.disabled = true; btn.textContent = "Enviando…";
+          enviarEmailSolicitacaoAcesso({
+            nome: _usuarioAtual.displayName || _usuarioAtual.email,
+            email: _usuarioAtual.email,
+            link: location.href
+          }).then(function () {
+            jaSolicitou = true;
+            btn.textContent = "Pedido enviado ✓";
+          }).catch(function (err) {
+            console.error(err);
+            btn.disabled = false; btn.textContent = "Solicitar acesso";
+            var erroEl = overlay.querySelector(".gate-erro");
+            erroEl.textContent = "Não foi possível enviar o pedido (" + (err && err.message ? err.message : "erro") + ").";
+            erroEl.style.display = "block";
+          });
+        });
+      }
+
+      if (_usuarioAtual) {
+        overlay.querySelector(".gate-titulo").textContent = "Sem permissão";
+        overlay.querySelector(".gate-desc").textContent = "Esta conta ainda não tem acesso liberado ao catálogo.";
+        overlay.querySelector(".gate-conta").textContent = _usuarioAtual.email;
+        overlay.querySelector(".gate-acoes-login").style.display = "none";
+        overlay.querySelector(".gate-negado").style.display = "block";
+      } else {
+        overlay.querySelector(".gate-titulo").textContent = "Acesso restrito";
+        overlay.querySelector(".gate-desc").textContent = "Entre com sua conta Google autorizada para ver o catálogo.";
+        overlay.querySelector(".gate-acoes-login").style.display = "flex";
+        overlay.querySelector(".gate-negado").style.display = "none";
+      }
+    }
+
+    _gateAtualizar = estadoAtual;
+    estadoAtual();
   });
 }
 
@@ -1507,9 +1581,11 @@ window.addEventListener("hashchange", route);
 store.onChange(route);
 document.getElementById("btn-novo-projeto").addEventListener("click", function(){ if (!exigirLogin()) return; abrirNovoProjeto(); });
 document.getElementById("btn-backup").addEventListener("click", function(){ abrirBackup(); });
-// o portão de acesso (Leitor/Editor) cobre a tela inteira até a
-// pessoa escolher — só depois disso o catálogo é montado
-iniciarPortaoAcesso().then(route);
+// o portão de acesso cobre a tela inteira até confirmar login
+// autorizado — só depois disso é que busca dados e monta o catálogo
+iniciarPortaoAcesso().then(function () {
+  return hidratarDoFirestore().catch(function (e) { console.warn("Firestore: falha ao carregar.", e); });
+}).then(route);
 
 function abrirBackup() {
   openModal({

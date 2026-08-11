@@ -1,3 +1,34 @@
+## Acesso restrito (login Google obrigatório) — ação pendente no console
+
+O código já foi atualizado pra exigir login com conta Google autorizada
+pra ver qualquer coisa no Catálogo (antes, a leitura era livre pra
+qualquer um com o link). Faltam **dois passos manuais no console do
+Firebase** pra isso valer de verdade — sem eles, o portão na tela
+funciona, mas a trava de verdade (no banco) ainda não está ativa:
+
+1. **Publicar a regra nova do Firestore** — abra o
+   [Console do Firebase](https://console.firebase.google.com/) → projeto
+   **giros-imagens** → Firestore Database → aba **Regras** → cole o
+   conteúdo atualizado de
+   [`firestore.rules`](../Plataforma_Acervo_Giros/Plataforma/firestore.rules)
+   (a coleção `catalogo_projetos` agora exige `emailAutorizado()` pra
+   **ler**, não só pra escrever) → **Publicar**.
+2. **Confirmar que o login Google está ativado** — Console do Firebase →
+   **Authentication** → aba **Sign-in method** → **Google** precisa
+   estar "Enabled". Confira também em **Authentication → Settings →
+   Authorized domains** se o domínio onde o Catálogo é publicado (ex.:
+   `*.github.io`) está na lista — sem isso, o popup de login falha.
+
+Se alguém precisar de acesso e não estiver na lista, a própria tela tem
+um botão **"Solicitar acesso"** que manda um e-mail (via EmailJS, mesmo
+mecanismo do "Solicitar versão") pra equipe. Pra liberar, adicione o
+e-mail em dois lugares (têm que bater):
+- `EMAILS_AUTORIZADOS` em [`js/bundle.js`](./js/bundle.js)
+- a lista dentro de `emailAutorizado()` em `firestore.rules` (e publicar
+  de novo, passo 1 acima)
+
+---
+
 # Ativar a sincronização do Catálogo (Firestore)
 
 Este projeto **reaproveita o mesmo projeto Firebase da Plataforma Acervo Giros**

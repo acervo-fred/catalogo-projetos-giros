@@ -115,7 +115,7 @@ async function firestoreMod() {
   _firestoreMod = {
     fdb: fsMod.getFirestore(app), doc: fsMod.doc, setDoc: fsMod.setDoc,
     deleteDoc: fsMod.deleteDoc, collection: fsMod.collection, getDocsFromServer: fsMod.getDocsFromServer,
-    getDoc: fsMod.getDoc, serverTimestamp: fsMod.serverTimestamp,
+    getDoc: fsMod.getDoc, serverTimestamp: fsMod.serverTimestamp, onSnapshot: fsMod.onSnapshot,
   };
   return _firestoreMod;
 }
@@ -131,13 +131,33 @@ async function deleteProjetoRemoto(id) {
   if (!mod) return;
   await mod.deleteDoc(mod.doc(mod.fdb, _firestoreCfg.COLLECTIONS.projetos, id));
 }
-async function hidratarDoFirestore() {
-  var mod = await firestoreMod();
-  if (!mod) return;
-  var snap = await mod.getDocsFromServer(mod.collection(mod.fdb, _firestoreCfg.COLLECTIONS.projetos));
-  if (snap.empty) return; // nada no Firestore ainda — não apaga dados locais
-  db.projetos = snap.docs.map(function(d) { return Object.assign({ id: d.id }, d.data()); });
-  saveDb();
+/* Antes buscava os projetos do Firestore uma única vez, ao carregar a
+   página — quem já estivesse com a aba aberta só via projetos/thumbnails
+   novos (gerados em outra máquina) depois de recarregar (F5), porque
+   navegar entre projetos aqui dentro é só troca de hash, sem nova busca.
+   Agora mantém um listener (onSnapshot) o tempo todo: qualquer mudança no
+   Firestore — de qualquer máquina — chega sozinha e re-renderiza a tela. */
+function hidratarDoFirestore() {
+  return new Promise(function (resolve) {
+    firestoreMod().then(function (mod) {
+      if (!mod) { resolve(); return; }
+      var primeiraVez = true;
+      mod.onSnapshot(mod.collection(mod.fdb, _firestoreCfg.COLLECTIONS.projetos), function (snap) {
+        if (!snap.empty) { // nada no Firestore ainda — não apaga dados locais
+          db.projetos = snap.docs.map(function(d) { return Object.assign({ id: d.id }, d.data()); });
+          saveDb();
+        }
+        if (primeiraVez) { primeiraVez = false; resolve(); }
+        else route();
+      }, function (e) {
+        console.warn("Firestore: falha ao sincronizar em tempo real.", e);
+        if (primeiraVez) { primeiraVez = false; resolve(); }
+      });
+    }).catch(function (e) {
+      console.warn("Firestore: falha ao carregar.", e);
+      resolve();
+    });
+  });
 }
 function sincronizar(p) {
   pushProjetoRemoto(p).catch(function(e) { console.warn("Firestore: falha ao salvar projeto.", e); });
@@ -1690,9 +1710,7 @@ document.getElementById("btn-backup").addEventListener("click", function(){ abri
 document.getElementById("btn-acessos").addEventListener("click", function(){ abrirAcessos(); });
 // o portão de acesso cobre a tela inteira até confirmar login
 // autorizado — só depois disso é que busca dados e monta o catálogo
-iniciarPortaoAcesso().then(function () {
-  return hidratarDoFirestore().catch(function (e) { console.warn("Firestore: falha ao carregar.", e); });
-}).then(route);
+iniciarPortaoAcesso().then(hidratarDoFirestore).then(route);
 
 function formatarDataCatalogo(ts) {
   if (!ts) return "—";

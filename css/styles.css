@@ -43,10 +43,17 @@ html, body {
 
 a { color: inherit; text-decoration: none; }
 
-/* ---- Header ---- */
+/* ---- Header ----
+   Grid de 3 colunas (logo | título | ações) em vez de título com
+   position:absolute centralizado na tela inteira — antes, com e-mail
+   longo ou tela mais estreita, o título "CATÁLOGO PROJETOS GIROS" podia
+   ficar por cima do e-mail/botões à direita. Com grid, o título fica
+   centralizado só dentro da sua própria coluna (que encolhe conforme o
+   bloco da direita precisa de espaço), então nunca sobrepõe — e corta
+   com "…" no caso extremo de não caber. */
 #app-header {
   position: sticky; top: 0; z-index: 50;
-  display: flex; align-items: center; gap: 16px;
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 16px;
   padding: 10px 28px;
   background: rgba(255,255,255,0.92);
   backdrop-filter: blur(12px);
@@ -55,11 +62,12 @@ a { color: inherit; text-decoration: none; }
 .header-logo { height: 72px; width: auto; display: block; }
 .header-logo-link { display: flex; align-items: center; }
 .header-titulo {
-  position: absolute; left: 50%; transform: translateX(-50%);
+  justify-self: center; text-align: center; max-width: 100%;
   font-size: 28px; font-weight: 800; color: var(--text-soft);
-  white-space: nowrap; pointer-events: none; letter-spacing: -0.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  letter-spacing: -0.5px;
 }
-.header-spacer { flex: 1; }
+.header-right { display: flex; align-items: center; gap: 16px; justify-self: end; }
 
 /* ---- Main app area ---- */
 #app { padding: 0 28px 60px; max-width: 1400px; margin: 0 auto; }
@@ -90,8 +98,9 @@ a { color: inherit; text-decoration: none; }
 .btn-link-abrir:hover { background: #1a5ce0; border-color: #1a5ce0; }
 .priv-badge {
   font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 12px;
-  white-space: nowrap; display: inline-block; vertical-align: middle;
+  white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; vertical-align: middle;
 }
+.priv-badge svg { display: block; flex-shrink: 0; }
 .badge-rose { background: var(--c-rose-bg); color: var(--c-rose-fg); }
 .danger-btn { color: var(--c-rose-fg) !important; }
 .danger-btn:hover { background: var(--c-rose-bg) !important; border-color: var(--c-rose-fg) !important; }
@@ -330,21 +339,28 @@ a { color: inherit; text-decoration: none; }
 .lock-icon { font-size: 12px; color: var(--text-faint); }
 .link-obs { font-size: 12px; color: var(--text-soft); font-weight: 400; }
 
-/* ---- Tabela de vídeos (colunas bem divididas) ---- */
+/* ---- Linha de vídeos (flexbox — ver linkRow() em js/bundle.js) ----
+   Era uma <table>: no layout automático de tabela, a sobra de espaço da
+   linha (container mais largo que o conteúdo, o normal aqui) ia toda pra
+   coluna de título — a única sem largura fixa — abrindo um vão enorme
+   antes da privacidade/senha mesmo em títulos curtos, sem jeito de evitar
+   só com CSS (max-width na célula não segura o layout automático). Com
+   flexbox e gap fixo, cada coluna ocupa só o espaço que precisa e a sobra
+   fica no final da linha, invisível. */
 .videos-table-wrap {
   border: 1px solid var(--border-strong); border-radius: var(--r-sm);
   overflow: visible; margin-bottom: 4px;
 }
-.videos-table { width: 100%; border-collapse: collapse; }
-.videos-table tbody tr { border-bottom: 1px solid var(--border); }
-.videos-table tbody tr:last-child { border-bottom: none; }
-.videos-table tbody tr:hover { background: var(--surface-2); }
-.videos-table td {
-  padding: 8px 12px; font-size: 13px; vertical-align: middle;
+.videos-table .link-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 8px 12px; font-size: 13px;
+  border-bottom: 1px solid var(--border);
 }
-.videos-table td.col-thumb { white-space: nowrap; width: 1%; padding-right: 4px; }
+.videos-table .link-row:last-child { border-bottom: none; }
+.videos-table .link-row:hover { background: var(--surface-2); }
+.col-thumb { flex-shrink: 0; }
 .thumb-wrap {
-  position: relative; width: 84px; height: 47px; border-radius: 6px;
+  position: relative; width: 112px; height: 63px; border-radius: 6px;
   overflow: hidden; background: var(--surface-2); flex-shrink: 0;
 }
 .thumb-wrap.thumb-empty { border: 1px dashed var(--border); }
@@ -354,24 +370,29 @@ a { color: inherit; text-decoration: none; }
   background: rgba(0,0,0,0.75); color: #fff; font-size: 10px; font-weight: 600;
   padding: 1px 4px; border-radius: 3px; line-height: 1.4;
 }
-.videos-table td.col-code { white-space: nowrap; width: 1%; }
-.videos-table td.col-nome {
+.col-code { flex-shrink: 0; white-space: nowrap; }
+/* flex: 0 1 280px (não grow) + min-width:0 — sem o min-width o item nunca
+   encolhe abaixo do conteúdo, e o ellipsis do título/link não funciona. */
+.col-titulo { flex: 0 1 280px; min-width: 0; }
+.titulo-linha {
   color: var(--text); font-weight: 500;
-  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.videos-table td.col-link { max-width: 320px; }
-.link-priv-inline { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.link-priv-inline .link-col-url { flex: 1 1 auto; min-width: 0; }
-.link-priv-inline .priv-badge,
-.link-priv-inline .priv-badge-wrap { flex-shrink: 0; }
 .link-col-url {
   font-size: 12.5px; color: var(--text-soft); font-family: monospace;
-  text-decoration: none; display: block;
+  text-decoration: none; display: block; margin-top: 2px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .link-col-url:hover { color: var(--accent); text-decoration: underline; }
-.videos-table td.col-acoes { white-space: nowrap; width: 1%; text-align: right; }
-.row-actions { display: inline-flex; align-items: center; gap: 2px; }
+.col-privacidade, .col-senha, .col-compartilhar { flex-shrink: 0; white-space: nowrap; }
+/* Empurra só os 2 últimos grupos (Ver/Alterar senha, Copiar link/Compartilhar)
+   mais pra direita — um respiro fixo (não "auto", que preencheria todo o
+   espaço sobrando e reabriria o vão enorme em títulos curtos), calibrado
+   pra ficar perto do fim da caixa/botão "Solicitar versão" num título de
+   extensão média (ex.: "Carlinhos Brown em Meia Lua Inteira"). */
+.col-senha { margin-left: 130px; }
+.col-stack { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.col-acoes { flex-shrink: 0; }
 
 .labeled-btn {
   all: unset; box-sizing: border-box; cursor: pointer;
@@ -382,7 +403,7 @@ a { color: inherit; text-decoration: none; }
   white-space: nowrap;
 }
 .labeled-btn:hover { background: var(--surface); color: var(--text); border-color: var(--border); }
-.labeled-btn img { display: block; }
+.labeled-btn img, .labeled-btn svg { display: block; flex-shrink: 0; }
 
 /* Popover de senha (hover/foco sobre o badge de privacidade) */
 .priv-badge-wrap { position: relative; display: inline-flex; cursor: default; }

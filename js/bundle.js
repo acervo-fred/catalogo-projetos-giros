@@ -496,7 +496,7 @@ function iniciarPortaoAcesso() {
 var store = {
   onChange: function(fn) { _listeners.push(fn); },
   listProjetos: function() {
-    return db.projetos.slice().sort(function(a,b){ return (b.ano||0)-(a.ano||0); });
+    return db.projetos.slice().sort(function(a,b){ return (a.nome||"").localeCompare(b.nome||"", "pt-BR", { sensitivity: "base" }); });
   },
   getProjeto: function(id) {
     return db.projetos.find(function(p){ return p.id===id; }) || null;
@@ -1306,18 +1306,28 @@ function buildGroupShareText(tipo, links, projetoNome) {
   return header+"\n\n"+items.join("\n\n");
 }
 
-function privCell(l) {
-  var m = PRIV_META[l.privacidade];
+/* Badge estático (ícone + rótulo) da privacidade do link no Vimeo — fica ao
+   lado do título/link, pra qualquer tipo (privado, senha, não listado,
+   público, incorporado). Só indica o tipo; não tem interação. */
+function privIconBadge(priv) {
+  var m = PRIV_META[priv];
   if (!m) return "";
-  if (l.privacidade!=='senha') return '<span class="priv-badge badge-'+m.cor+'">'+m.label+'</span>';
+  return '<span class="priv-badge badge-'+m.cor+'">'+(PRIV_ICONS[priv]||"")+m.label+'</span>';
+}
 
+/* Gatilho "Ver senha" (hover/foco revela a senha num popover) — só existe
+   pra links protegidos por senha; fica na coluna de senha, junto do botão
+   "Alterar senha". O tipo de privacidade em si já aparece à parte, na
+   coluna de privacidade (privIconBadge). */
+function senhaTrigger(l) {
+  if (l.privacidade !== 'senha') return "";
   var conteudo = l.senha
     ? '<span class="senha-popover-valor" data-copy="'+esc(l.senha)+'" title="Clique para copiar">'+esc(l.senha)+'</span>'+
       '<span class="senha-popover-hint">Clique para copiar</span>'
     : '<span class="senha-popover-aviso">⚠ Não é possível ver a senha</span>';
 
   return '<span class="priv-badge-wrap" tabindex="0">'+
-      '<span class="priv-badge badge-'+m.cor+'">🔒 '+m.label+'</span>'+
+      '<span class="labeled-btn">'+ICON_CADEADO_SENHA+' Ver senha</span>'+
       '<span class="senha-popover">'+
         '<span class="senha-popover-box">'+
           conteudo+
@@ -1327,7 +1337,7 @@ function privCell(l) {
 }
 
 function wrapTable(rowsHtml) {
-  return '<div class="videos-table-wrap"><table class="videos-table"><tbody>'+rowsHtml+'</tbody></table></div>';
+  return '<div class="videos-table-wrap"><div class="videos-table">'+rowsHtml+'</div></div>';
 }
 
 function ordenarPorTitulo(arr) {
@@ -1356,38 +1366,83 @@ function formatDuracao(seg) {
   return h ? (h + ":" + String(m).padStart(2,"0") + ":" + ss) : (mm + ":" + ss);
 }
 
+/* Ícones minimalistas (linha, sem preenchimento) pros botões de ação da tabela
+   de links — substituem os emojis 🔑/📋 antigos, que destoavam do ícone
+   "Compartilhar" (Compartilhar.png), mais discreto. currentColor acompanha a
+   cor do texto do botão (inclusive no hover). */
+var ICON_CHAVE = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">'+
+  '<circle cx="4.5" cy="4.5" r="2.75" stroke="currentColor" stroke-width="1.3"/>'+
+  '<path d="M6.5 6.5L12.5 12.5M10.7 10.7L11.55 9.85M11.9 11.9L12.75 11.05" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>'+
+  '</svg>';
+var ICON_COPIAR = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">'+
+  '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.3"/>'+
+  '<path d="M3.5 10.5H2.75C2.05964 10.5 1.5 9.94036 1.5 9.25V2.75C1.5 2.05964 2.05964 1.5 2.75 1.5H9.25C9.94036 1.5 10.5 2.05964 10.5 2.75V3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>'+
+  '</svg>';
+
+/* Ícones minimalistas da coluna de privacidade — um por tipo (privado, senha,
+   não listado, público, incorporado), no mesmo estilo de linha fina acima. */
+var ICON_CADEADO = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">'+
+  '<rect x="3.5" y="7.2" width="9" height="6.3" rx="1.3" stroke="currentColor" stroke-width="1.3"/>'+
+  '<path d="M5.5 7.2V5.2A2.5 2.5 0 0 1 10.5 5.2V7.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>'+
+  '</svg>';
+var ICON_CADEADO_SENHA = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">'+
+  '<rect x="3.5" y="7.2" width="9" height="6.3" rx="1.3" stroke="currentColor" stroke-width="1.3"/>'+
+  '<path d="M5.5 7.2V5.2A2.5 2.5 0 0 1 10.5 5.2V7.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>'+
+  '<circle cx="8" cy="9.9" r="0.75" fill="currentColor"/>'+
+  '<path d="M8 10.5V11.3" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>'+
+  '</svg>';
+var ICON_LINK = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">'+
+  '<path d="M6.6 9.4L9.4 6.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>'+
+  '<path d="M7.9 5.3L8.7 4.5A2.15 2.15 0 1 1 11.7 7.5L10.9 8.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>'+
+  '<path d="M8.1 10.7L7.3 11.5A2.15 2.15 0 1 1 4.3 8.5L5.1 7.7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>'+
+  '</svg>';
+var ICON_OLHO = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">'+
+  '<path d="M1.5 8S4 3.7 8 3.7 14.5 8 14.5 8 12 12.3 8 12.3 1.5 8 1.5 8Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>'+
+  '<circle cx="8" cy="8" r="1.7" stroke="currentColor" stroke-width="1.3"/>'+
+  '</svg>';
+var ICON_EMBED = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">'+
+  '<path d="M5.7 4.8L2.2 8l3.5 3.2M10.3 4.8L13.8 8l-3.5 3.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>'+
+  '</svg>';
+var PRIV_ICONS = {
+  privado: ICON_CADEADO, senha: ICON_CADEADO_SENHA, nao_listado: ICON_LINK,
+  publico: ICON_OLHO, incorporado: ICON_EMBED
+};
+
 function linkRow(l) {
   var badge = "";
   if (l.temporada) badge = '<span class="ep-badge">T'+l.temporada+(l.numero?' E'+l.numero:'')+'</span>';
   else if (l.numero) badge = '<span class="ep-badge">Ep.'+l.numero+'</span>';
   var dur = formatDuracao(l.duracao);
-  return '<tr class="link-row">'+
-    '<td class="col-thumb">'+
+  return '<div class="link-row">'+
+    '<div class="col-thumb">'+
       '<div class="thumb-wrap'+(l.thumbnail?"":" thumb-empty")+'">'+
         (l.thumbnail ? '<img class="thumb-img" src="'+esc(l.thumbnail)+'" alt="" loading="lazy">' : "")+
         (dur ? '<span class="thumb-duration">'+dur+'</span>' : "")+
       '</div>'+
-    '</td>'+
-    '<td class="col-code">'+badge+'</td>'+
-    '<td class="col-nome">'+esc(l.titulo)+'</td>'+
-    '<td class="col-link"><div class="link-priv-inline">'+
+    '</div>'+
+    '<div class="col-code">'+badge+'</div>'+
+    '<div class="col-titulo">'+
+      '<div class="titulo-linha">'+esc(l.titulo)+'</div>'+
       '<a href="'+esc(l.url)+'" target="_blank" rel="noopener" class="link-col-url" title="'+esc(l.url)+'">'+esc(l.url)+'</a>'+
-      privCell(l)+
-    '</div></td>'+
-    '<td class="col-acoes"><div class="row-actions">'+
+    '</div>'+
+    '<div class="col-privacidade">'+privIconBadge(l.privacidade)+'</div>'+
+    '<div class="col-senha col-stack">'+
+      senhaTrigger(l)+
       (l.privacidade==='senha'
-        ? '<button class="labeled-btn edit-only" data-action="altsenha" data-link-id="'+esc(l.id)+'">🔑 Alterar senha</button>'
+        ? '<button class="labeled-btn edit-only" data-action="altsenha" data-link-id="'+esc(l.id)+'">'+ICON_CHAVE+' Alterar senha</button>'
         : "")+
-      '<button class="labeled-btn" data-action="copylink" data-copy-link="'+esc(l.url)+'">📋 Copiar link</button>'+
+    '</div>'+
+    '<div class="col-compartilhar col-stack">'+
+      '<button class="labeled-btn" data-action="copylink" data-copy-link="'+esc(l.url)+'">'+ICON_COPIAR+' Copiar link</button>'+
       '<button class="labeled-btn" data-action="share" data-share-text="'+attrShare(buildShareText(l))+'">'+
         '<img src="./Compartilhar.png" width="14" height="14" alt=""> Compartilhar'+
       '</button>'+
-      '<div class="item-actions edit-only">'+
-        '<button class="icon-btn" data-action="edit" data-link-id="'+esc(l.id)+'" title="Editar">✎</button>'+
-        '<button class="icon-btn danger" data-action="del" data-link-id="'+esc(l.id)+'" title="Excluir">🗑</button>'+
-      '</div>'+
-    '</div></td>'+
-  '</tr>';
+    '</div>'+
+    '<div class="col-acoes item-actions edit-only">'+
+      '<button class="icon-btn" data-action="edit" data-link-id="'+esc(l.id)+'" title="Editar">✎</button>'+
+      '<button class="icon-btn danger" data-action="del" data-link-id="'+esc(l.id)+'" title="Excluir">🗑</button>'+
+    '</div>'+
+  '</div>';
 }
 
 function renderVideosPorTipo(links, projetoNome, porEpisodio) {
